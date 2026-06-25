@@ -1,13 +1,33 @@
+# Секреты и окружение
+.env
+*.env.local
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
 venv/
-.env
-*.db
-node_modules/
-.next/
-data/input/*.xlsx
-data/input/*.csv
-data/input/*.docx
-data/output/*
-data/temp/*
-*.log
+.venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные тестовые файлы
+read_csv_test.py
+
+# Данные (опционально — раскомментируй, если не хочешь коммитить CSV)
+# *.csv
+# *.xlsx
