@@ -1,19 +1,27 @@
+import argparse
 import asyncio
+import os
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from sentence_transformers import SentenceTransformer
 
-DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/catalog_db"
+# URL БД можно задать аргументом --db-url или переменной окружения database_url.
+# Дефолт оставлен на 5432 для обратной совместимости.
+DEFAULT_DB_URL = os.getenv(
+    "database_url",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/catalog_db",
+)
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
-async def regenerate_embeddings():
+async def regenerate_embeddings(database_url: str):
     """Перегенерирует эмбеддинги товаров с учетом description"""
+    print(f"Подключение: {database_url.split('@')[-1]}")
     print(f"Загрузка модели {MODEL_NAME}...")
     model = SentenceTransformer(MODEL_NAME)
     print("Модель загружена")
-    
-    engine = create_async_engine(DATABASE_URL, echo=False)
+
+    engine = create_async_engine(database_url, echo=False)
     
     async with engine.begin() as conn:
         result = await conn.execute(text("SELECT id, name, description FROM products"))
@@ -56,4 +64,12 @@ async def regenerate_embeddings():
         print(f"Перегенерация эмбеддингов завершена")
 
 if __name__ == "__main__":
-    asyncio.run(regenerate_embeddings())
+    parser = argparse.ArgumentParser(
+        description="Перегенерация эмбеддингов товаров по name + description"
+    )
+    parser.add_argument(
+        "--db-url", default=DEFAULT_DB_URL,
+        help="URL БД (async). По умолчанию env database_url или localhost:5432.",
+    )
+    args = parser.parse_args()
+    asyncio.run(regenerate_embeddings(args.db_url))
