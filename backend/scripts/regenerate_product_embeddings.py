@@ -14,9 +14,15 @@ DEFAULT_DB_URL = os.getenv(
 )
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
-async def regenerate_embeddings(database_url: str):
-    """Перегенерирует эмбеддинги товаров с учетом description"""
+async def regenerate_embeddings(database_url: str, mode: str = "name"):
+    """Перегенерирует эмбеддинги товаров.
+
+    mode='name'      — эмбеддинг только по названию (даёт более чистый матч на
+                       названия позиций стандарта; на наших данных лучше).
+    mode='name_desc' — по name + description (длинные описания размывают сигнал).
+    """
     print(f"Подключение: {database_url.split('@')[-1]}")
+    print(f"Режим эмбеддинга: {mode}")
     print(f"Загрузка модели {MODEL_NAME}...")
     model = SentenceTransformer(MODEL_NAME)
     print("Модель загружена")
@@ -35,13 +41,11 @@ async def regenerate_embeddings(database_url: str):
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
             
-            # Конкатенируем name + description
             texts_for_embedding = []
             ids = []
             for record_id, name, description in batch:
-                # Переименовали переменную, чтобы не конфликтовала с импортом
                 combined_text = name
-                if description:
+                if mode == "name_desc" and description:
                     combined_text += " " + description
                 texts_for_embedding.append(combined_text)
                 ids.append(record_id)
@@ -71,5 +75,10 @@ if __name__ == "__main__":
         "--db-url", default=DEFAULT_DB_URL,
         help="URL БД (async). По умолчанию env database_url или localhost:5432.",
     )
+    parser.add_argument(
+        "--mode", choices=["name", "name_desc"], default="name",
+        help="name — только название (по умолчанию, чище матч); "
+             "name_desc — name + description.",
+    )
     args = parser.parse_args()
-    asyncio.run(regenerate_embeddings(args.db_url))
+    asyncio.run(regenerate_embeddings(args.db_url, args.mode))
