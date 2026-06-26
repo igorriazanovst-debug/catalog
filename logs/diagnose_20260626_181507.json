@@ -1,0 +1,1391 @@
+{
+  "generated_at": "2026-06-26T18:15:07.721177",
+  "params": {
+    "threshold": 0.7,
+    "top_k": 5,
+    "limit": 0,
+    "db_url": "postgresql+asyncpg://***@localhost:5433/catalog_db"
+  },
+  "db_stats": {
+    "standards_total": 1377,
+    "standards_with_embedding": 1377,
+    "standards_with_keywords": 1377,
+    "products_total": 10,
+    "products_with_embedding": 10,
+    "mappings_total": 0,
+    "warnings": []
+  },
+  "lemmatization_check": {
+    "sampled": 30,
+    "match_ratio": 0.1
+  },
+  "summary": {
+    "products_processed": 10,
+    "decisions": {
+      "auto_hybrid": 0,
+      "below_threshold": 10
+    },
+    "pool_divergence": 10,
+    "avg_best_hybrid": 0.3474
+  },
+  "products": [
+    {
+      "product_id": 1,
+      "name": "Набор таблиц \"Словарные слова\"",
+      "product_keywords": [
+        "выделить",
+        "где",
+        "дать",
+        "двухсторонний",
+        "диктант",
+        "для",
+        "другой",
+        "запоминание",
+        "использовать",
+        "как",
+        "комплект",
+        "место",
+        "можно",
+        "набор",
+        "один",
+        "паспорт",
+        "пропуск",
+        "самопроверка",
+        "словарный",
+        "слово",
+        "состоять",
+        "сторона",
+        "таблица",
+        "так",
+        "трудный",
+        "формат",
+        "цвет"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 1333,
+          "standard_name": "Индивидуальный комплект для письма по Брайлю",
+          "vector_similarity": 0.567,
+          "keyword_similarity": 0.3667,
+          "hybrid_score": 0.4268,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 35,
+          "standard_name": "Шкаф для читательских формуляров",
+          "vector_similarity": 0.5913,
+          "keyword_similarity": 0.2333,
+          "hybrid_score": 0.3407,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 1359,
+          "standard_name": "Разборная азбука-колодка по Брайлю для изучения новых знаков",
+          "vector_similarity": 0.5948,
+          "keyword_similarity": 0.2294,
+          "hybrid_score": 0.339,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 1334,
+          "standard_name": "Набор тематических рельефно-графических пособий по различным предметным областям",
+          "vector_similarity": 0.5708,
+          "keyword_similarity": 0.2294,
+          "hybrid_score": 0.3318,
+          "intersection": [
+            "набор"
+          ]
+        },
+        {
+          "standard_id": 328,
+          "standard_name": "Настольные лингвистические игры",
+          "vector_similarity": 0.5678,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1704,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 778,
+          "standard_name": "Набор для препарирования",
+          "keyword_similarity": 0.3714,
+          "intersection": [
+            "для",
+            "набор"
+          ]
+        },
+        {
+          "standard_id": 904,
+          "standard_name": "Комплект для вышивания",
+          "keyword_similarity": 0.3714,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 177,
+          "standard_name": "Набор для игры в шахматы",
+          "keyword_similarity": 0.369,
+          "intersection": [
+            "для",
+            "набор"
+          ]
+        },
+        {
+          "standard_id": 178,
+          "standard_name": "Набор для игры в шашки",
+          "keyword_similarity": 0.369,
+          "intersection": [
+            "для",
+            "набор"
+          ]
+        },
+        {
+          "standard_id": 186,
+          "standard_name": "Комплект для настольного тенниса",
+          "keyword_similarity": 0.369,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.4268,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 2,
+      "name": "Опорные таблицы по русскому языку 3 класс",
+      "product_keywords": [
+        "время",
+        "глагол",
+        "изменение",
+        "имя",
+        "класс",
+        "комплект",
+        "лицо",
+        "местоимение",
+        "множественный",
+        "морфологический",
+        "настоящий",
+        "однородный",
+        "окончание",
+        "опорный",
+        "падеж",
+        "падежный",
+        "паспорт",
+        "после",
+        "правописание",
+        "предложение",
+        "прилагательное",
+        "пример",
+        "разбор",
+        "русский",
+        "склонение",
+        "спряжение",
+        "существительное",
+        "таблица",
+        "тип",
+        "формат",
+        "часть",
+        "число",
+        "член",
+        "шипящий",
+        "язык"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 328,
+          "standard_name": "Настольные лингвистические игры",
+          "vector_similarity": 0.5157,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1547,
+          "intersection": []
+        },
+        {
+          "standard_id": 1340,
+          "standard_name": "Прибор 18-строчный для письма по Брайлю, грифель",
+          "vector_similarity": 0.4998,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1499,
+          "intersection": []
+        },
+        {
+          "standard_id": 1346,
+          "standard_name": "Рельефно-графические альбомы для предметных кабинетов",
+          "vector_similarity": 0.4805,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1442,
+          "intersection": []
+        },
+        {
+          "standard_id": 35,
+          "standard_name": "Шкаф для читательских формуляров",
+          "vector_similarity": 0.4776,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1433,
+          "intersection": []
+        },
+        {
+          "standard_id": 46,
+          "standard_name": "Принтер этикеток",
+          "vector_similarity": 0.4736,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1421,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 158,
+          "standard_name": "Комплект гантелей",
+          "keyword_similarity": 0.2278,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 159,
+          "standard_name": "Комплект гирь",
+          "keyword_similarity": 0.2278,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 181,
+          "standard_name": "Лыжный комплект",
+          "keyword_similarity": 0.2278,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 567,
+          "standard_name": "Комплект проводов",
+          "keyword_similarity": 0.2278,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 698,
+          "standard_name": "Комплект пипеток",
+          "keyword_similarity": 0.2278,
+          "intersection": [
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.1547,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 3,
+      "name": "Таблица \"Азбука в картинках\"",
+      "product_keywords": [
+        "азбука",
+        "бумага",
+        "картинка",
+        "напечатать",
+        "печать",
+        "полноцветной",
+        "таблица"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 1329,
+          "standard_name": "Устройство рельефной печати текстовой и графической информации (универсальный брайлевский принтер)",
+          "vector_similarity": 0.6829,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.2049,
+          "intersection": []
+        },
+        {
+          "standard_id": 737,
+          "standard_name": "Пособия наглядной экспозиции",
+          "vector_similarity": 0.6633,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.199,
+          "intersection": []
+        },
+        {
+          "standard_id": 933,
+          "standard_name": "Стол металлический под станок",
+          "vector_similarity": 0.5857,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1757,
+          "intersection": []
+        },
+        {
+          "standard_id": 1243,
+          "standard_name": "Комплект учебных материалов для фотостудии",
+          "vector_similarity": 0.5822,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1747,
+          "intersection": []
+        },
+        {
+          "standard_id": 878,
+          "standard_name": "Документ-камера",
+          "vector_similarity": 0.5694,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1708,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 725,
+          "standard_name": "Фильтровальная бумага/фильтры бумажные",
+          "keyword_similarity": 0.3,
+          "intersection": [
+            "бумага"
+          ]
+        },
+        {
+          "standard_id": 1336,
+          "standard_name": "Специальная бумага для письма и печати по Брайлю",
+          "keyword_similarity": 0.2833,
+          "intersection": [
+            "бумага"
+          ]
+        },
+        {
+          "standard_id": 1348,
+          "standard_name": "Рельефообразующая бумага для получения рельефных изображений",
+          "keyword_similarity": 0.2833,
+          "intersection": [
+            "бумага"
+          ]
+        },
+        {
+          "standard_id": 1376,
+          "standard_name": "Рельефообразующая бумага для получения рельефных изображений",
+          "keyword_similarity": 0.2833,
+          "intersection": [
+            "бумага"
+          ]
+        },
+        {
+          "standard_id": 1359,
+          "standard_name": "Разборная азбука-колодка по Брайлю для изучения новых знаков",
+          "keyword_similarity": 0.2714,
+          "intersection": [
+            "азбука"
+          ]
+        }
+      ],
+      "best_hybrid": 0.2049,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 4,
+      "name": "Таблицы демонстрационные \"Обучение грамоте 1 класс\"",
+      "product_keywords": [
+        "буква",
+        "гласный",
+        "грамота",
+        "демонстрационный",
+        "звук",
+        "класс",
+        "комплект",
+        "комплектность",
+        "обучение",
+        "паспорт",
+        "предложение",
+        "размер",
+        "слово",
+        "слог",
+        "согласный",
+        "таблица",
+        "ударный"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 1220,
+          "standard_name": "Комплект учебных материалов",
+          "vector_similarity": 0.6328,
+          "keyword_similarity": 0.2526,
+          "hybrid_score": 0.3667,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 391,
+          "standard_name": "Комплект репродукций картин для уроков развития речи и литературы",
+          "vector_similarity": 0.5959,
+          "keyword_similarity": 0.2417,
+          "hybrid_score": 0.3479,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 401,
+          "standard_name": "Раздаточные карточки по иностранному языку для начальных классов",
+          "vector_similarity": 0.5993,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1798,
+          "intersection": []
+        },
+        {
+          "standard_id": 1340,
+          "standard_name": "Прибор 18-строчный для письма по Брайлю, грифель",
+          "vector_similarity": 0.5971,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1791,
+          "intersection": []
+        },
+        {
+          "standard_id": 345,
+          "standard_name": "Справочники по математике для начальных классов",
+          "vector_similarity": 0.5959,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1788,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 760,
+          "standard_name": "Комплект коллекций демонстрационный",
+          "keyword_similarity": 0.4111,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 812,
+          "standard_name": "Комплект муляжей демонстрационный",
+          "keyword_similarity": 0.4111,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 758,
+          "standard_name": "Комплект влажных препаратов демонстрационный",
+          "keyword_similarity": 0.4053,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 807,
+          "standard_name": "Комплект моделей-аппликаций демонстрационный",
+          "keyword_similarity": 0.4053,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 808,
+          "standard_name": "Комплект анатомических моделей демонстрационный",
+          "keyword_similarity": 0.4053,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.3667,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 5,
+      "name": "Раздаточные карточки с буквами русского алфавита",
+      "product_keywords": [
+        "алфавит",
+        "белый",
+        "буква",
+        "весь",
+        "входить",
+        "заранее",
+        "знак",
+        "каждый",
+        "карточка",
+        "комплект",
+        "коробка",
+        "который",
+        "магнит",
+        "набор",
+        "один",
+        "печатный",
+        "пособие",
+        "представить",
+        "представлять",
+        "приклеить",
+        "промаркировать",
+        "прописной",
+        "раздаточный",
+        "русский",
+        "самостоятельно",
+        "себя",
+        "следовать",
+        "состав",
+        "строчный",
+        "также",
+        "уложить",
+        "фон"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 801,
+          "standard_name": "Комплект этикеток",
+          "vector_similarity": 0.6866,
+          "keyword_similarity": 0.2303,
+          "hybrid_score": 0.3672,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 726,
+          "standard_name": "Комплект этикеток",
+          "vector_similarity": 0.6866,
+          "keyword_similarity": 0.2303,
+          "hybrid_score": 0.3672,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 324,
+          "standard_name": "Раздаточные карточки с буквами русского/родного алфавита",
+          "vector_similarity": 0.827,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.2481,
+          "intersection": []
+        },
+        {
+          "standard_id": 1362,
+          "standard_name": "Тактильная касса букв и цифр",
+          "vector_similarity": 0.717,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.2151,
+          "intersection": []
+        },
+        {
+          "standard_id": 344,
+          "standard_name": "Раздаточные карточки с цифрами и математическими знаками",
+          "vector_similarity": 0.6935,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.2081,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 366,
+          "standard_name": "Комплект раздаточный учебно-лабораторного и практического оборудования по технологии для начальных классов",
+          "keyword_similarity": 0.35,
+          "intersection": [
+            "комплект",
+            "раздаточный"
+          ]
+        },
+        {
+          "standard_id": 158,
+          "standard_name": "Комплект гантелей",
+          "keyword_similarity": 0.2303,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 159,
+          "standard_name": "Комплект гирь",
+          "keyword_similarity": 0.2303,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 181,
+          "standard_name": "Лыжный комплект",
+          "keyword_similarity": 0.2303,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 461,
+          "standard_name": "Набор колокольчиков",
+          "keyword_similarity": 0.2303,
+          "intersection": [
+            "набор"
+          ]
+        }
+      ],
+      "best_hybrid": 0.3672,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 6,
+      "name": "Комплект карточек (10) \"Универсальная платформа. Разбор слова и предложения\"",
+      "product_keywords": [
+        "буква",
+        "вариант",
+        "вместе",
+        "второй",
+        "где",
+        "дидактический",
+        "для",
+        "задание",
+        "или",
+        "использование",
+        "использоваться",
+        "картон",
+        "карточка",
+        "код",
+        "комплект",
+        "комплектность",
+        "ламинировать",
+        "маркировка",
+        "наглядно",
+        "напечатать",
+        "начальный",
+        "номер",
+        "обозначать",
+        "паспорт",
+        "первый",
+        "платформа",
+        "плёнка",
+        "полноцветной",
+        "порядковый",
+        "последний",
+        "пособие",
+        "предложение",
+        "предмет",
+        "предназначить",
+        "разбор",
+        "русский",
+        "серия",
+        "слово",
+        "снабдить",
+        "состоять",
+        "тема",
+        "универсальный",
+        "урок",
+        "цифра",
+        "школа",
+        "язык"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 1333,
+          "standard_name": "Индивидуальный комплект для письма по Брайлю",
+          "vector_similarity": 0.6109,
+          "keyword_similarity": 0.3408,
+          "hybrid_score": 0.4219,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 401,
+          "standard_name": "Раздаточные карточки по иностранному языку для начальных классов",
+          "vector_similarity": 0.6934,
+          "keyword_similarity": 0.2192,
+          "hybrid_score": 0.3615,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 403,
+          "standard_name": "Игровые наборы на изучаемом иностранном языке для начальных классов",
+          "vector_similarity": 0.6181,
+          "keyword_similarity": 0.2189,
+          "hybrid_score": 0.3387,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 336,
+          "standard_name": "Игровые наборы на изучаемом иностранном языке для начальных классов",
+          "vector_similarity": 0.6181,
+          "keyword_similarity": 0.2189,
+          "hybrid_score": 0.3387,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 1340,
+          "standard_name": "Прибор 18-строчный для письма по Брайлю, грифель",
+          "vector_similarity": 0.6026,
+          "keyword_similarity": 0.2196,
+          "hybrid_score": 0.3345,
+          "intersection": [
+            "для"
+          ]
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 904,
+          "standard_name": "Комплект для вышивания",
+          "keyword_similarity": 0.3426,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 186,
+          "standard_name": "Комплект для настольного тенниса",
+          "keyword_similarity": 0.3417,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 364,
+          "standard_name": "Комплект моделей для натюрморта",
+          "keyword_similarity": 0.3417,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 701,
+          "standard_name": "Комплект стаканчиков для взвешивания",
+          "keyword_similarity": 0.3417,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 370,
+          "standard_name": "Комплект портретов для оформления кабинета",
+          "keyword_similarity": 0.3408,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.4219,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 7,
+      "name": "Модель-аппликация \"Набор звуковых схем\"",
+      "product_keywords": [
+        "аппликация",
+        "буква",
+        "гласный",
+        "грамота",
+        "динамический",
+        "для",
+        "доска",
+        "звук",
+        "звуковой",
+        "зелёный",
+        "или",
+        "использование",
+        "использовать",
+        "карточка",
+        "квадратный",
+        "кодирование",
+        "комплектность",
+        "красный",
+        "крепить",
+        "ламинировать",
+        "легко",
+        "магнит",
+        "магнитная",
+        "модель",
+        "мягкий",
+        "набор",
+        "начальный",
+        "обозначать",
+        "обозначаться",
+        "обозначение",
+        "обучение",
+        "отдельный",
+        "паспорт",
+        "плёнка",
+        "позволять",
+        "пособие",
+        "предназначить",
+        "прямоугольный",
+        "синий",
+        "слог",
+        "согласный",
+        "схема",
+        "твёрдый",
+        "традиционный",
+        "укомплектовать",
+        "урок",
+        "цвет",
+        "цветовой",
+        "что",
+        "школа",
+        "экран"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 358,
+          "standard_name": "Модели-аппликации для начальных классов",
+          "vector_similarity": 0.5844,
+          "keyword_similarity": 0.2182,
+          "hybrid_score": 0.3281,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 69,
+          "standard_name": "Персональный компьютер с программным обеспечением для обработки звука",
+          "vector_similarity": 0.5588,
+          "keyword_similarity": 0.2175,
+          "hybrid_score": 0.3199,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 1362,
+          "standard_name": "Тактильная касса букв и цифр",
+          "vector_similarity": 0.6149,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1845,
+          "intersection": []
+        },
+        {
+          "standard_id": 349,
+          "standard_name": "Комплект демонстрационных пособий",
+          "vector_similarity": 0.5606,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1682,
+          "intersection": []
+        },
+        {
+          "standard_id": 1054,
+          "standard_name": "Комплект учебно-методических материалов по компьютерной графике и черчению",
+          "vector_similarity": 0.5519,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1656,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 396,
+          "standard_name": "Модель-аппликация демонстрационная по иностранному языку для начальных классов",
+          "keyword_similarity": 0.3536,
+          "intersection": [
+            "аппликация",
+            "для",
+            "модель"
+          ]
+        },
+        {
+          "standard_id": 1085,
+          "standard_name": "Электронный стрелковый тренажер для стрельбы по проецируемым на экран мишеням и (или) стрелковый тир для пневматического оружия (при наличии специального помещения)",
+          "keyword_similarity": 0.3469,
+          "intersection": [
+            "для",
+            "или",
+            "экран"
+          ]
+        },
+        {
+          "standard_id": 200,
+          "standard_name": "Доска для плавания",
+          "keyword_similarity": 0.3385,
+          "intersection": [
+            "для",
+            "доска"
+          ]
+        },
+        {
+          "standard_id": 778,
+          "standard_name": "Набор для препарирования",
+          "keyword_similarity": 0.3385,
+          "intersection": [
+            "для",
+            "набор"
+          ]
+        },
+        {
+          "standard_id": 177,
+          "standard_name": "Набор для игры в шахматы",
+          "keyword_similarity": 0.3377,
+          "intersection": [
+            "для",
+            "набор"
+          ]
+        }
+      ],
+      "best_hybrid": 0.3281,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 8,
+      "name": "Модель-аппликация \"Неопределенная форма глагола. Три времени глагола\" (лам.)",
+      "product_keywords": [
+        "аппликация",
+        "будильник",
+        "будущее",
+        "вид",
+        "вопрос",
+        "время",
+        "глагол",
+        "демонстрационный",
+        "динамический",
+        "для",
+        "доска",
+        "изменение",
+        "изобразить",
+        "изучение",
+        "или",
+        "информация",
+        "использование",
+        "карточка",
+        "качество",
+        "комплектность",
+        "крепить",
+        "лама",
+        "ламинировать",
+        "легко",
+        "магнит",
+        "магнитная",
+        "материал",
+        "матовый",
+        "модель",
+        "название",
+        "настоящий",
+        "начальный",
+        "неопределённый",
+        "опорный",
+        "паспорт",
+        "плёнка",
+        "позволять",
+        "полноцветной",
+        "пособие",
+        "предназначить",
+        "при",
+        "прошедшее",
+        "путешествовать",
+        "русский",
+        "содержать",
+        "состоять",
+        "схема",
+        "таблица",
+        "тем",
+        "три",
+        "укомплектовать",
+        "урок",
+        "форма",
+        "формат",
+        "что",
+        "школа",
+        "экран",
+        "язык"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 396,
+          "standard_name": "Модель-аппликация демонстрационная по иностранному языку для начальных классов",
+          "vector_similarity": 0.6692,
+          "keyword_similarity": 0.3476,
+          "hybrid_score": 0.4441,
+          "intersection": [
+            "аппликация",
+            "для",
+            "модель"
+          ]
+        },
+        {
+          "standard_id": 400,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.6014,
+          "keyword_similarity": 0.2156,
+          "hybrid_score": 0.3313,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 333,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.6014,
+          "keyword_similarity": 0.2156,
+          "hybrid_score": 0.3313,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 328,
+          "standard_name": "Настольные лингвистические игры",
+          "vector_similarity": 0.5855,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1757,
+          "intersection": []
+        },
+        {
+          "standard_id": 1220,
+          "standard_name": "Комплект учебных материалов",
+          "vector_similarity": 0.5824,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1747,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 1085,
+          "standard_name": "Электронный стрелковый тренажер для стрельбы по проецируемым на экран мишеням и (или) стрелковый тир для пневматического оружия (при наличии специального помещения)",
+          "keyword_similarity": 0.3571,
+          "intersection": [
+            "для",
+            "или",
+            "при",
+            "экран"
+          ]
+        },
+        {
+          "standard_id": 396,
+          "standard_name": "Модель-аппликация демонстрационная по иностранному языку для начальных классов",
+          "keyword_similarity": 0.3476,
+          "intersection": [
+            "аппликация",
+            "для",
+            "модель"
+          ]
+        },
+        {
+          "standard_id": 200,
+          "standard_name": "Доска для плавания",
+          "keyword_similarity": 0.3339,
+          "intersection": [
+            "для",
+            "доска"
+          ]
+        },
+        {
+          "standard_id": 555,
+          "standard_name": "Магнит полосовой демонстрационный",
+          "keyword_similarity": 0.3339,
+          "intersection": [
+            "демонстрационный",
+            "магнит"
+          ]
+        },
+        {
+          "standard_id": 341,
+          "standard_name": "Модель-аппликация демонстрационная по множествам",
+          "keyword_similarity": 0.3333,
+          "intersection": [
+            "аппликация",
+            "модель"
+          ]
+        }
+      ],
+      "best_hybrid": 0.4441,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 9,
+      "name": "Комплект таблиц \"Падежи-человечки\"",
+      "product_keywords": [
+        "вид",
+        "вопрос",
+        "вспомогательный",
+        "графический",
+        "дать",
+        "демонстрационный",
+        "демонстрировать",
+        "для",
+        "изображение",
+        "изучение",
+        "имя",
+        "использование",
+        "качество",
+        "комплект",
+        "комплектность",
+        "который",
+        "материал",
+        "название",
+        "начальный",
+        "падеж",
+        "паспорт",
+        "пособие",
+        "предназначить",
+        "при",
+        "русский",
+        "слово",
+        "смысл",
+        "соответствующий",
+        "существительное",
+        "таблица",
+        "тема",
+        "урок",
+        "формат",
+        "человечек",
+        "шесть",
+        "школа",
+        "язык"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 391,
+          "standard_name": "Комплект репродукций картин для уроков развития речи и литературы",
+          "vector_similarity": 0.6431,
+          "keyword_similarity": 0.3465,
+          "hybrid_score": 0.4355,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 333,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.6481,
+          "keyword_similarity": 0.2233,
+          "hybrid_score": 0.3507,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 400,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.6481,
+          "keyword_similarity": 0.2233,
+          "hybrid_score": 0.3507,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 401,
+          "standard_name": "Раздаточные карточки по иностранному языку для начальных классов",
+          "vector_similarity": 0.6439,
+          "keyword_similarity": 0.2233,
+          "hybrid_score": 0.3494,
+          "intersection": [
+            "для"
+          ]
+        },
+        {
+          "standard_id": 1220,
+          "standard_name": "Комплект учебных материалов",
+          "vector_similarity": 0.6308,
+          "keyword_similarity": 0.2256,
+          "hybrid_score": 0.3472,
+          "intersection": [
+            "комплект"
+          ]
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 760,
+          "standard_name": "Комплект коллекций демонстрационный",
+          "keyword_similarity": 0.3526,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 812,
+          "standard_name": "Комплект муляжей демонстрационный",
+          "keyword_similarity": 0.3526,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 904,
+          "standard_name": "Комплект для вышивания",
+          "keyword_similarity": 0.3526,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 186,
+          "standard_name": "Комплект для настольного тенниса",
+          "keyword_similarity": 0.3513,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 364,
+          "standard_name": "Комплект моделей для натюрморта",
+          "keyword_similarity": 0.3513,
+          "intersection": [
+            "для",
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.4355,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    },
+    {
+      "product_id": 10,
+      "name": "Таблицы демонстрационные «Русский язык 1 класс»",
+      "product_keywords": [
+        "безударный",
+        "буква",
+        "гласный",
+        "демонстрационный",
+        "звук",
+        "класс",
+        "комплект",
+        "комплектность",
+        "конец",
+        "корн",
+        "парный",
+        "перенос",
+        "после",
+        "правописание",
+        "предлог",
+        "предложение",
+        "русский",
+        "слово",
+        "согласный",
+        "сочетание",
+        "таблица",
+        "член",
+        "шипящий",
+        "язык"
+      ],
+      "vector_pool": [
+        {
+          "standard_id": 1333,
+          "standard_name": "Индивидуальный комплект для письма по Брайлю",
+          "vector_similarity": 0.5316,
+          "keyword_similarity": 0.2357,
+          "hybrid_score": 0.3245,
+          "intersection": [
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 1359,
+          "standard_name": "Разборная азбука-колодка по Брайлю для изучения новых знаков",
+          "vector_similarity": 0.5721,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1716,
+          "intersection": []
+        },
+        {
+          "standard_id": 400,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.5312,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1594,
+          "intersection": []
+        },
+        {
+          "standard_id": 333,
+          "standard_name": "Демонстрационные пособия по иностранному языку для начальных классов",
+          "vector_similarity": 0.5312,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1594,
+          "intersection": []
+        },
+        {
+          "standard_id": 1335,
+          "standard_name": "Тетрадь для письма по Брайлю",
+          "vector_similarity": 0.5177,
+          "keyword_similarity": 0.0,
+          "hybrid_score": 0.1553,
+          "intersection": []
+        }
+      ],
+      "keyword_pool_global": [
+        {
+          "standard_id": 760,
+          "standard_name": "Комплект коллекций демонстрационный",
+          "keyword_similarity": 0.38,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 812,
+          "standard_name": "Комплект муляжей демонстрационный",
+          "keyword_similarity": 0.38,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 758,
+          "standard_name": "Комплект влажных препаратов демонстрационный",
+          "keyword_similarity": 0.3769,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 807,
+          "standard_name": "Комплект моделей-аппликаций демонстрационный",
+          "keyword_similarity": 0.3769,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        },
+        {
+          "standard_id": 808,
+          "standard_name": "Комплект анатомических моделей демонстрационный",
+          "keyword_similarity": 0.3769,
+          "intersection": [
+            "демонстрационный",
+            "комплект"
+          ]
+        }
+      ],
+      "best_hybrid": 0.3245,
+      "decision": "НИЖЕ ПОРОГА -> LLM/ручная",
+      "pool_diverged": true
+    }
+  ]
+}
