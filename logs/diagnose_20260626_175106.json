@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-06-26T17:51:06.607850",
+  "params": {
+    "threshold": 0.7,
+    "top_k": 5,
+    "limit": 0,
+    "db_url": "postgresql+asyncpg://***@localhost:5433/catalog_db"
+  },
+  "db_stats": {
+    "standards_total": 1377,
+    "standards_with_embedding": 1377,
+    "standards_with_keywords": 1377,
+    "products_total": 0,
+    "products_with_embedding": 0,
+    "mappings_total": 0,
+    "warnings": [
+      "У товаров НЕТ эмбеддингов — векторный поиск не сработает. Запустите scripts/regenerate_product_embeddings.py"
+    ]
+  },
+  "aborted": "no_embeddings"
+}
