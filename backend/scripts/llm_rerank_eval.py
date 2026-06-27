@@ -95,18 +95,30 @@ async def run(args):
             for sid, nm in r.fetchall():
                 std_name[sid] = nm
 
-            limit_clause = f"LIMIT {args.limit}" if args.limit else ""
-            res = await conn.execute(text(
-                "SELECT id, name, description, properties, embedding FROM products "
-                f"WHERE embedding IS NOT NULL ORDER BY id {limit_clause}"
-            ))
+            # Выбор товаров: либо случайная выборка (--sample), либо первые N (--limit).
+            if args.sample:
+                res = await conn.execute(text(
+                    "SELECT id, name, description, properties, embedding FROM products "
+                    "WHERE embedding IS NOT NULL ORDER BY random() LIMIT :n"
+                ), {"n": args.sample})
+            else:
+                limit_clause = f"LIMIT {args.limit}" if args.limit else ""
+                res = await conn.execute(text(
+                    "SELECT id, name, description, properties, embedding FROM products "
+                    f"WHERE embedding IS NOT NULL ORDER BY id {limit_clause}"
+                ))
             products = res.fetchall()
+            total = len(products)
+            out.write(f"Товаров к обработке: {total}"
+                      f"{' (случайная выборка)' if args.sample else ''}")
+            out.write("")
 
             n = 0
             agree = 0           # LLM выбрал того же, что и вектор top-1
             llm_null = 0        # LLM сказал «подходящего нет»
             llm_confident = 0   # confidence >= порога
             llm_failed = 0      # LLM не ответил (нет ключей/ошибка)
+            lang_trap = 0       # товар про русский, а LLM выбрал «иностранный»
 
             for pid, name, description, properties, embedding in products:
                 shortlist = await vector_shortlist(conn, embedding, args.pool)
@@ -142,6 +154,23 @@ async def run(args):
                     llm_confident += 1
                 if llm_id is not None and llm_id == vec_top1_id:
                     agree += 1
+
+                # «Ловушка смежности»: товар про русский язык, а LLM выбрал
+                # позицию про иностранный язык (типовая доменная ошибка).
+                chosen_name = (std_name.get(llm_id, "") if llm_id else "").lower()
+                ptext_low = (name + " " + (description or "")).lower()
+                is_lang_trap = (("русск" in ptext_low or "родн" in ptext_low)
+                                and "иностранн" in chosen_name)
+                if is_lang_trap:
+                    lang_trap += 1
+
+                # Прогресс в stderr (не засоряет лог)
+                if n % 25 == 0:
+                    print(f"  ...обработано {n}/{total}", file=sys.stderr)
+
+                # Пауза между вызовами LLM (rate limiting), если задана
+                if args.sleep > 0:
+                    await asyncio.sleep(args.sleep)
 
                 out.write("")
                 out.write(f"--- Товар {pid}: {name}")
@@ -182,6 +211,7 @@ async def run(args):
                 out.write(f"  LLM сказал «подходящего нет» (null):  {llm_null}")
                 out.write(f"  LLM уверен (conf >= {args.llm_threshold}):           {llm_confident}")
                 out.write(f"  LLM не ответил (нет ключей/ошибка):   {llm_failed}")
+                out.write(f"  Ловушка «русский→иностранный»:        {lang_trap}")
             if llm_failed == n and n:
                 out.write("")
                 out.write("  [!] LLM не ответил ни разу — проверьте YANDEX_GPT_* в backend/.env")
@@ -200,7 +230,12 @@ def parse_args():
     p = argparse.ArgumentParser(description="Оценка LLM-переранжирования (read-only)")
     p.add_argument("--db-url", default=DEFAULT_DB_URL)
     p.add_argument("--pool", type=int, default=8, help="Размер векторного шортлиста для LLM")
-    p.add_argument("--limit", type=int, default=0, help="Ограничить число товаров (0=все)")
+    p.add_argument("--limit", type=int, default=0, help="Первые N товаров (0=все)")
+    p.add_argument("--sample", type=int, default=0,
+                   help="Случайная выборка N товаров (приоритетнее --limit). "
+                        "Рекомендуется для больших наборов, чтобы не жечь квоту LLM.")
+    p.add_argument("--sleep", type=float, default=0.0,
+                   help="Пауза в секундах между вызовами LLM (rate limiting)")
     p.add_argument("--llm-threshold", type=float, default=0.7,
                    help="Порог уверенности LLM для зачёта в авто (для статистики)")
     p.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))

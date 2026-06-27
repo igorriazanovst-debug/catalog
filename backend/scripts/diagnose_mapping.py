@@ -390,35 +390,36 @@ async def diagnose(args):
                 if diverged:
                     pool_divergence += 1
 
-                # --- Вывод по товару ---
-                out.write("")
-                out.write(f"--- Товар {prod_id}: {name}")
-                if description:
-                    out.write(f"    Описание: {description}")
-                out.write(f"    keywords(товар): {sorted(prod_keywords) or '∅'}")
-                out.write(f"    Векторный пул (top-{args.top_k}, как в проде):")
-                for c in vec_cands:
-                    out.write(
-                        f"      std={c['standard_id']:<6} hyb={c['hybrid_score']:.3f} "
-                        f"(vec={c['vector_similarity']:.3f} kw={c['keyword_similarity']:.3f}) "
-                        f"| {c['standard_name']}"
-                    )
-                    if c["intersection"]:
-                        out.write(f"           ∩keywords: {c['intersection']}")
-                if kw_top:
-                    out.write(f"    Keyword-пул по ВСЕМ стандартам (top-{args.top_k}, диагностика):")
-                    for ksim, std_id, item_name, inter in kw_top:
-                        in_vec = " (есть в вект.пуле)" if std_id in {r[0] for r in vrows} else ""
+                # --- Вывод по товару (можно отключить --summary-only) ---
+                if not args.summary_only:
+                    out.write("")
+                    out.write(f"--- Товар {prod_id}: {name}")
+                    if description:
+                        out.write(f"    Описание: {description}")
+                    out.write(f"    keywords(товар): {sorted(prod_keywords) or '∅'}")
+                    out.write(f"    Векторный пул (top-{args.top_k}, как в проде):")
+                    for c in vec_cands:
                         out.write(
-                            f"      std={std_id:<6} kw={ksim:.3f} | {item_name}{in_vec}"
+                            f"      std={c['standard_id']:<6} hyb={c['hybrid_score']:.3f} "
+                            f"(vec={c['vector_similarity']:.3f} kw={c['keyword_similarity']:.3f}) "
+                            f"| {c['standard_name']}"
                         )
-                        out.write(f"           ∩keywords: {inter}")
-                else:
-                    out.write("    Keyword-пул: пусто (нет пересечений ни с одним стандартом)")
-                if diverged:
-                    out.write("    [!] Расхождение пула: лучший по keyword отсутствует/ниже "
-                              "в векторном пуле — keyword-сигнал теряется.")
-                out.write(f"    Решение: {decision} (лучший hybrid={best_hybrid:.3f})")
+                        if c["intersection"]:
+                            out.write(f"           ∩keywords: {c['intersection']}")
+                    if kw_top:
+                        out.write(f"    Keyword-пул по ВСЕМ стандартам (top-{args.top_k}, диагностика):")
+                        for ksim, std_id, item_name, inter in kw_top:
+                            in_vec = " (есть в вект.пуле)" if std_id in {r[0] for r in vrows} else ""
+                            out.write(
+                                f"      std={std_id:<6} kw={ksim:.3f} | {item_name}{in_vec}"
+                            )
+                            out.write(f"           ∩keywords: {inter}")
+                    else:
+                        out.write("    Keyword-пул: пусто (нет пересечений ни с одним стандартом)")
+                    if diverged:
+                        out.write("    [!] Расхождение пула: лучший по keyword отсутствует/ниже "
+                                  "в векторном пуле — keyword-сигнал теряется.")
+                    out.write(f"    Решение: {decision} (лучший hybrid={best_hybrid:.3f})")
 
                 per_product.append({
                     "product_id": prod_id,
@@ -495,6 +496,9 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=5, help="Сколько кандидатов показывать")
     p.add_argument("--limit", type=int, default=0,
                    help="Ограничить число товаров (0 = все)")
+    p.add_argument("--summary-only", action="store_true",
+                   help="Не печатать разбор по каждому товару, только сводку "
+                        "(рекомендуется для больших наборов).")
     p.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR),
                    help="Куда писать логи (по умолчанию <repo>/logs)")
     return p.parse_args()
