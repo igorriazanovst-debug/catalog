@@ -98,7 +98,8 @@ async def main(args):
 
             llm = await get_llm_mapping(
                 {"name": name, "description": description or "", "properties": properties or {}},
-                [{"id": c["standard_id"], "standard_name": c["standard_name"]} for c in pool],
+                [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
+                 for c in pool],
             )
             llm_id = llm.get("standard_id")
             conf = llm.get("confidence", 0.0) or 0.0

@@ -185,6 +185,27 @@ class MappingService:
                 }
 
         candidates = list(pool.values())
+
+        # Обогащаем метаданными иерархии (кабинет/область) для метки кандидата.
+        ids = list(pool.keys())
+        if ids:
+            meta_res = await self.db.execute(
+                text("SELECT id, full_code, subsection_name FROM industry_standards "
+                     "WHERE id = ANY(:ids)"),
+                {"ids": ids},
+            )
+            meta = {r[0]: (r[1], r[2]) for r in meta_res.fetchall()}
+            for c in candidates:
+                full_code, subsection_name = meta.get(c["standard_id"], (None, None))
+                # 2-уровневый код = общая позиция «по предметной области»
+                is_generic = bool(full_code) and full_code.count(".") == 1
+                label_area = "По предметной области" if is_generic else (subsection_name or "")
+                c["full_code"] = full_code
+                c["subsection_name"] = subsection_name
+                # Метка для LLM: "[Кабинет химии] <название>"
+                c["llm_label"] = (f"[{label_area}] {c['standard_name']}"
+                                  if label_area else c["standard_name"])
+
         # Сортировка для показа: сначала по вектору (есть vsim), затем keyword-only.
         candidates.sort(
             key=lambda c: (c["vector_similarity"] if c["vector_similarity"] is not None else -1.0),
@@ -193,6 +214,7 @@ class MappingService:
         for c in candidates:
             # match_score — для обратной совместимости с потребителями (=vsim или 0)
             c["match_score"] = c["vector_similarity"] if c["vector_similarity"] is not None else 0.0
+            c.setdefault("llm_label", c["standard_name"])
             vs = "—" if c["vector_similarity"] is None else f"{c['vector_similarity']:.3f}"
             ks = "—" if c["keyword_score"] is None else f"{c['keyword_score']:.2f}"
             c["match_reason"] = f"sources={'+'.join(c['sources'])} vec={vs} kw={ks}"
@@ -241,7 +263,7 @@ class MappingService:
                     "properties": product_properties or {},
                 }
                 llm_candidates = [
-                    {"id": c["standard_id"], "standard_name": c["standard_name"]}
+                    {"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
                     for c in pool
                 ]
 
