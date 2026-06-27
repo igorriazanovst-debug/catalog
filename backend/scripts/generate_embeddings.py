@@ -1,22 +1,28 @@
+import argparse
 import asyncio
+import os
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from sentence_transformers import SentenceTransformer
 
-# Подключение к БД
-DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/catalog_db"
+# Подключение к БД: --db-url или env database_url, дефолт 5432 для совместимости
+DEFAULT_DB_URL = os.getenv(
+    "database_url",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/catalog_db",
+)
 
 # Модель для эмбеддингов
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 
-async def generate_embeddings():
+async def generate_embeddings(database_url: str):
     """Генерирует векторные эмбеддинги для всех позиций в industry_standards"""
+    print(f"Подключение: {database_url.split('@')[-1]}")
     print(f"Загрузка модели {MODEL_NAME}...")
     model = SentenceTransformer(MODEL_NAME)
     print("Модель загружена")
-    
-    engine = create_async_engine(DATABASE_URL, echo=False)
+
+    engine = create_async_engine(database_url, echo=False)
     
     async with engine.begin() as conn:
         # Получаем все записи без эмбеддингов
@@ -62,4 +68,12 @@ async def generate_embeddings():
         print(f"Генерация эмбеддингов завершена. Всего обработано {total_processed} записей")
 
 if __name__ == "__main__":
-    asyncio.run(generate_embeddings())
+    parser = argparse.ArgumentParser(
+        description="Генерация эмбеддингов для industry_standards"
+    )
+    parser.add_argument(
+        "--db-url", default=DEFAULT_DB_URL,
+        help="URL БД (async). По умолчанию env database_url или localhost:5432.",
+    )
+    args = parser.parse_args()
+    asyncio.run(generate_embeddings(args.db_url))

@@ -28,7 +28,7 @@ DEFAULT_DB_URL = os.getenv(
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_OUT = REPO_ROOT / "logs" / "standards_838.csv"
 
-COLUMNS = ["id", "section_code", "section_name", "subsection_code",
+COLUMNS = ["id", "full_code", "section_code", "section_name", "subsection_code",
            "subsection_name", "equipment_type", "item_name"]
 
 
@@ -36,7 +36,9 @@ async def main(args):
     engine = create_async_engine(args.db_url, echo=False)
     async with engine.connect() as conn:
         res = await conn.execute(text(
-            "SELECT id, section_code, section_name, subsection_code, "
+            "SELECT id, "
+            "COALESCE(full_code, '') AS full_code, "
+            "section_code, section_name, subsection_code, "
             "subsection_name, equipment_type, item_name "
             "FROM industry_standards ORDER BY id"
         ))
