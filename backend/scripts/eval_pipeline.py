@@ -66,7 +66,9 @@ async def main(args):
 
     async with Session() as db:
         service = MappingService(db)
-        for pid, gold in truth.items():
+        n_truth = len(truth)
+        for idx, (pid, gold) in enumerate(truth.items(), 1):
+            print(f"  [{idx}/{n_truth}] товар {pid} ...", file=sys.stderr, flush=True)
             pr = await db.execute(
                 __import__("sqlalchemy").text(
                     "SELECT name, description, properties FROM products WHERE id = :id"
