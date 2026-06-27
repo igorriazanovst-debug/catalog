@@ -58,13 +58,20 @@ async def main(args):
 
     total = 0
     correct = 0
+    name_correct = 0   # совпало по НАЗВАНИЮ позиции (а не только по id)
     recall = 0
     null_cnt = 0
     present_total = 0   # эталон был в пуле
     present_correct = 0
     conf_bands = {"[0.9,1.0]": [], "[0.7,0.9)": [], "[<0.7)": []}
+    dump = []          # построчная выгрузка для анализа ошибок
 
     async with Session() as db:
+        # справочник id -> название (для name-совпадения и выгрузки)
+        sres = await db.execute(__import__("sqlalchemy").text(
+            "SELECT id, item_name FROM industry_standards"))
+        std_name = {r[0]: r[1] for r in sres.fetchall()}
+
         service = MappingService(db)
         n_truth = len(truth)
         for idx, (pid, gold) in enumerate(truth.items(), 1):
@@ -100,6 +107,10 @@ async def main(args):
                 null_cnt += 1
             ok = (llm_id == gold)
             correct += ok
+            # совпадение по названию (одинаковый item_name = та же позиция в др. кабинете)
+            name_ok = (llm_id is not None
+                       and std_name.get(llm_id, "\0") == std_name.get(gold, "\1"))
+            name_correct += name_ok
             if in_pool:
                 present_total += 1
                 present_correct += ok
@@ -107,10 +118,33 @@ async def main(args):
                     b = "[0.9,1.0]" if conf >= 0.9 else "[0.7,0.9)" if conf >= 0.7 else "[<0.7)"
                     conf_bands[b].append(ok)
 
+            dump.append({
+                "product_id": pid,
+                "product_name": name,
+                "gold_id": gold,
+                "gold_name": std_name.get(gold, ""),
+                "llm_id": llm_id if llm_id is not None else "null",
+                "llm_name": std_name.get(llm_id, "") if llm_id is not None else "",
+                "id_ok": int(ok),
+                "name_ok": int(name_ok),
+                "in_pool": int(in_pool),
+                "confidence": f"{conf:.2f}",
+            })
+
             if args.sleep > 0:
                 await asyncio.sleep(args.sleep)
 
     await engine.dispose()
+
+    # выгрузка по строкам
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dump_path = Path(args.csv).resolve().parent / f"eval_dump_{ts}.csv"
+    with open(dump_path, "w", encoding="utf-8-sig", newline="") as f:
+        import csv as _csv
+        w = _csv.DictWriter(f, fieldnames=list(dump[0].keys()), delimiter=";")
+        w.writeheader()
+        w.writerows(dump)
 
     print("")
     print("=" * 60)
@@ -118,12 +152,14 @@ async def main(args):
     print("=" * 60)
     if total:
         print(f"Товаров обработано:               {total}")
-        print(f"Accuracy (LLM == эталон):         {correct}/{total} = {correct/total:.0%}")
+        print(f"Accuracy (LLM == эталон по id):    {correct}/{total} = {correct/total:.0%}")
+        print(f"Accuracy по НАЗВАНИЮ позиции:      {name_correct}/{total} = {name_correct/total:.0%}")
         print(f"Recall (эталон в пуле):           {recall}/{total} = {recall/total:.0%}")
         if present_total:
             print(f"Precision@pool (когда эталон в пуле): "
                   f"{present_correct}/{present_total} = {present_correct/present_total:.0%}")
         print(f"LLM сказал null:                  {null_cnt}")
+        print(f"Выгрузка по строкам:              {dump_path}")
         print("")
         print("Точность по уверенности LLM (где эталон был в пуле):")
         for b, v in conf_bands.items():
