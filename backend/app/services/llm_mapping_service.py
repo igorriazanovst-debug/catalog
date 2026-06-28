@@ -95,7 +95,7 @@ SYSTEM_PROMPT = """
 
 
 # Провайдеры LLM-судьи. id -> человекочитаемая метка.
-PROVIDERS = {"yandex": "YandexGPT", "groq": "Groq"}
+PROVIDERS = {"yandex": "YandexGPT", "groq": "Groq", "aitunnel": "AITunnel (Gemini)"}
 
 RETRIABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 4
@@ -107,6 +107,8 @@ def provider_configured(provider: str) -> bool:
         return bool(settings.YANDEX_GPT_API_KEY and settings.YANDEX_GPT_FOLDER_ID)
     if provider == "groq":
         return bool(settings.GROQ_API_KEY)
+    if provider == "aitunnel":
+        return bool(settings.AITUNNEL_API_KEY)
     return False
 
 
@@ -176,6 +178,8 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict],
     user_prompt = _build_user_prompt(product_data, candidates)
     if provider == "groq":
         return await _call_groq(user_prompt)
+    if provider == "aitunnel":
+        return await _call_aitunnel(user_prompt)
     return await _call_yandex(user_prompt)
 
 
@@ -214,22 +218,48 @@ async def _call_groq(user_prompt: str) -> dict:
         logger.warning("Groq не настроен (нет GROQ_API_KEY).")
         return {"standard_id": None, "confidence": 0.0,
                 "reason": "Groq не настроен", "error": True}
+    return await _call_openai_compatible(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL,
+        user_prompt=user_prompt, label="Groq", json_mode=True,
+    )
 
+
+async def _call_aitunnel(user_prompt: str) -> dict:
+    if not settings.AITUNNEL_API_KEY:
+        logger.warning("AITunnel не настроен (нет AITUNNEL_API_KEY).")
+        return {"standard_id": None, "confidence": 0.0,
+                "reason": "AITunnel не настроен", "error": True}
+    # response_format не форсируем: за AITunnel могут стоять разные модели
+    # (gemini и др.), часть не принимает json_object → полагаемся на промпт
+    # и парсер (снимает ```json-обёртку).
+    return await _call_openai_compatible(
+        base_url=settings.AITUNNEL_BASE_URL,
+        api_key=settings.AITUNNEL_API_KEY, model=settings.AITUNNEL_MODEL,
+        user_prompt=user_prompt, label="AITunnel", json_mode=False,
+    )
+
+
+async def _call_openai_compatible(*, base_url: str, api_key: str, model: str,
+                                  user_prompt: str, label: str,
+                                  json_mode: bool) -> dict:
+    """Общий вызов OpenAI-совместимого chat/completions (Groq, AITunnel и т.п.)."""
     payload = {
-        "model": settings.GROQ_MODEL,
+        "model": model,
         "temperature": 0.1,
         "max_tokens": 1000,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
     headers = {
-        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    url = base_url.rstrip("/") + "/chat/completions"
 
     def extract(result):
         choices = result.get('choices', [])
@@ -237,7 +267,7 @@ async def _call_groq(user_prompt: str) -> dict:
             raise ValueError("пустой choices")
         return choices[0]['message']['content']
 
-    return await _post_with_retry(url, headers, payload, extract, "Groq")
+    return await _post_with_retry(url, headers, payload, extract, label)
 
 
 async def _post_with_retry(url, headers, payload, extract, label) -> dict:

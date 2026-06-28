@@ -40,7 +40,13 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-    # Провайдер LLM-судьи по умолчанию: "yandex" | "groq".
+    # AITunnel (OpenAI-совместимый агрегатор, доступен из РФ).
+    # base_url по умолчанию https://api.aitunnel.ru/v1, модель gemini-2.5-flash.
+    AITUNNEL_API_KEY: str = os.getenv("AITUNNEL_API_KEY", "")
+    AITUNNEL_MODEL: str = os.getenv("AITUNNEL_MODEL", "gemini-2.5-flash")
+    AITUNNEL_BASE_URL: str = os.getenv("AITUNNEL_BASE_URL", "https://api.aitunnel.ru/v1")
+
+    # Провайдер LLM-судьи по умолчанию: "yandex" | "groq" | "aitunnel".
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "yandex")
 
     # Прокси ТОЛЬКО для исходящих запросов к LLM (Groq геоблокирует РФ → 403).
