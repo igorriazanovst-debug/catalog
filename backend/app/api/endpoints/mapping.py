@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/mapping", tags=["mapping"])
 @router.post("/auto-map")
 async def auto_map_products(
     confidence_threshold: float = 0.7,
-    top_k: int = 15,
+    top_k: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -25,7 +25,7 @@ async def auto_map_products(
 @router.get("/candidates/{product_id}")
 async def get_mapping_candidates(
     product_id: int,
-    top_k: int = 15,
+    top_k: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
     """

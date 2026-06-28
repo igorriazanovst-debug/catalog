@@ -88,19 +88,24 @@ class MappingService:
         if _std_index is not None:
             return _std_index
 
-        res = await self.db.execute(text("SELECT id, item_name FROM industry_standards"))
+        res = await self.db.execute(
+            text("SELECT id, item_name, full_code FROM industry_standards"))
         lemmas, names, df = {}, {}, {}
-        for sid, name in res.fetchall():
+        generics = []  # [(id, item_name)] для 2-уровневых «по предметной области»
+        for sid, name, full_code in res.fetchall():
             lem = lemmatize(name)
             lemmas[sid] = lem
             names[sid] = name
             for w in lem:
                 df[w] = df.get(w, 0) + 1
+            if full_code and full_code.count(".") == 1:
+                generics.append((sid, name))
 
         n_docs = max(len(names), 1)
         idf = {w: math.log(n_docs / (c + 1)) + 1.0 for w, c in df.items()}
-        _std_index = {"lemmas": lemmas, "idf": idf, "names": names}
-        logger.info("IDF-индекс стандартов построен: %d позиций", len(names))
+        _std_index = {"lemmas": lemmas, "idf": idf, "names": names, "generics": generics}
+        logger.info("IDF-индекс стандартов построен: %d позиций, %d генериков",
+                    len(names), len(generics))
         return _std_index
 
     # ------------------------------------------------------------------ #
@@ -141,7 +146,7 @@ class MappingService:
     # ------------------------------------------------------------------ #
     # Гибридный ретрив: объединённый пул кандидатов (read-only)
     # ------------------------------------------------------------------ #
-    async def map_product_to_standards(self, product_id: int, top_k: int = 15) -> list:
+    async def map_product_to_standards(self, product_id: int, top_k: int = 20) -> list:
         """Возвращает объединённый пул кандидатов (вектор ∪ keyword) для товара.
 
         Каждый элемент: standard_id, standard_name, vector_similarity (или None),
@@ -160,6 +165,7 @@ class MappingService:
 
         vec = await self._vector_candidates(embedding, top_k)
         kw = await self._keyword_candidates(text_for_kw, top_k)
+        idx = await self._ensure_std_index()
 
         # Объединяем по standard_id
         pool = {}
@@ -182,6 +188,19 @@ class MappingService:
                     "vector_similarity": None,
                     "keyword_score": score,
                     "sources": ["keyword"],
+                }
+
+        # Всегда добавляем общие «по предметной области» генерик-позиции:
+        # они применимы к любому кабинету (таблицы, словари, ЭОР, мебель и т.п.)
+        # и иначе вытесняются предметными кандидатами из top-K.
+        for sid, sname in idx.get("generics", []):
+            if sid not in pool:
+                pool[sid] = {
+                    "standard_id": sid,
+                    "standard_name": sname,
+                    "vector_similarity": None,
+                    "keyword_score": None,
+                    "sources": ["generic"],
                 }
 
         candidates = list(pool.values())
@@ -226,7 +245,7 @@ class MappingService:
     async def auto_map_all_products(
         self,
         llm_confidence_threshold: float = 0.7,
-        top_k: int = 15,
+        top_k: int = 20,
         **_legacy,  # поглощает устаревший threshold= из старых вызовов
     ) -> dict:
         # Берём товары (с properties, если колонка есть)

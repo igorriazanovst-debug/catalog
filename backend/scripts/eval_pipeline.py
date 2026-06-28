@@ -172,7 +172,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Сквозная оценка пайплайна на размеченной выборке")
     p.add_argument("--csv", required=True)
     p.add_argument("--db-url", default=DEFAULT_DB_URL)
-    p.add_argument("--top-k", type=int, default=15)
+    p.add_argument("--top-k", type=int, default=20)
     p.add_argument("--sleep", type=float, default=0.2)
     return p.parse_args()
 
