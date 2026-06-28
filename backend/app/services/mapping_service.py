@@ -318,9 +318,18 @@ class MappingService:
         if llm_id is None:
             return {"standard_id": None, "score": llm_conf,
                     "reason": llm.get("reason", ""), "method": "null", "is_manual": True}
+
+        # Калибровка авто/ручная по СОГЛАСИЮ КАНАЛОВ РЕТРИВА (уверенность LLM
+        # практически всегда 0.9–1.0 и неинформативна). Авто — если выбранную
+        # позицию подтвердили оба канала (вектор И keyword); иначе — на ручную.
+        chosen = next((c for c in pool if c["standard_id"] == llm_id), None)
+        agreement = bool(chosen) and {"vector", "keyword"} <= set(chosen.get("sources", []))
+        is_manual = not (agreement and llm_conf >= llm_confidence_threshold)
         return {"standard_id": llm_id, "score": llm_conf,
-                "reason": f"LLM (conf {llm_conf:.2f}): {llm.get('reason', '')}",
-                "method": "llm", "is_manual": llm_conf < llm_confidence_threshold}
+                "reason": f"LLM (conf {llm_conf:.2f}, "
+                          f"{'оба канала' if agreement else 'один канал'}): "
+                          f"{llm.get('reason', '')}",
+                "method": "llm", "is_manual": is_manual, "agreement": agreement}
 
     # ------------------------------------------------------------------ #
     # Авто-маппинг всех товаров: гибридный ретрив -> LLM-судья -> решение

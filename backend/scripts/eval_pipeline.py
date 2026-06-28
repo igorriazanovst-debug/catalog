@@ -101,6 +101,7 @@ async def main(args):
             llm_id = decision["standard_id"]
             conf = decision["score"]
             method = decision["method"]
+            is_manual = decision.get("is_manual", True)
 
             if llm_id is None:
                 null_cnt += 1
@@ -128,6 +129,7 @@ async def main(args):
                 "name_ok": int(name_ok),
                 "in_pool": int(in_pool),
                 "method": method,
+                "is_manual": int(is_manual),
                 "confidence": f"{conf:.2f}",
             })
 
@@ -165,6 +167,17 @@ async def main(args):
             if mr:
                 ok_m = sum(d["id_ok"] for d in mr)
                 print(f"  метод {m:5}: {len(mr):3} шт, верных {ok_m} ({ok_m/len(mr):.0%})")
+        # Калибровка авто/ручная: точность АВТО-подмножества должна быть высокой,
+        # а ошибки — уходить в «ручную».
+        auto = [d for d in dump if d["is_manual"] == 0]
+        man = [d for d in dump if d["is_manual"] == 1]
+        if auto:
+            ok_a = sum(d["id_ok"] for d in auto)
+            print(f"  АВТО:   {len(auto):3} шт, точность {ok_a}/{len(auto)} = {ok_a/len(auto):.0%}")
+        if man:
+            ok_mn = sum(d["id_ok"] for d in man)
+            print(f"  РУЧНАЯ: {len(man):3} шт, среди них верных {ok_mn} "
+                  f"({ok_mn/len(man):.0%}) — это кандидаты на проверку")
         print(f"Выгрузка по строкам:              {dump_path}")
         print("")
         print("Точность по уверенности LLM (где эталон был в пуле):")

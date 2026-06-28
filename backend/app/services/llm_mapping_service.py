@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import json
 import re
@@ -135,38 +136,61 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict]) -> dict:
         "Content-Type": "application/json"
     }
 
-    llm_text = ""  # Инициализируем, чтобы не было ошибки в except json.JSONDecodeError
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    retriable_status = {429, 500, 502, 503, 504}
+    max_attempts = 4
+    base_delay = 2.0  # 2s, 4s, 8s
+    last_reason = "LLM не ответил"
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            # Правильный ключ — 'alternatives'
-            alternatives = result.get('result', {}).get('alternatives', [])
-            if not alternatives:
-                logger.error(f"No alternatives in YandexGPT response: {result}")
-                return {"standard_id": None, "confidence": 0.0, "reason": "LLM returned empty alternatives"}
-            
-            llm_text = alternatives[0]['message']['text']
-            
-            # Очищаем от возможных markdown-оберток (```json ... ```)
-            clean_text = re.sub(r'^```json\s*|\s*```$', '', llm_text.strip(), flags=re.MULTILINE)
-            
-            # Парсим JSON
-            return json.loads(clean_text)
+    for attempt in range(1, max_attempts + 1):
+        retry = False
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"YandexGPT API HTTP error: {e.response.status_code} - {e.response.text}")
-        return {"standard_id": None, "confidence": 0.0, "reason": f"LLM API Error: {e.response.status_code}"}
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM JSON response: {llm_text}")
-        return {"standard_id": None, "confidence": 0.0, "reason": "LLM returned invalid JSON"}
-    except Exception as e:
-        logger.exception(f"Unexpected error during LLM mapping: {str(e)}")
-        return {"standard_id": None, "confidence": 0.0, "reason": f"Unexpected error: {str(e)}"}
+            if response.status_code in retriable_status:
+                last_reason = f"LLM API Error: {response.status_code}"
+                logger.warning("YandexGPT %s (попытка %d/%d)",
+                               response.status_code, attempt, max_attempts)
+                retry = True
+            else:
+                response.raise_for_status()
+                result = response.json()
+                alternatives = result.get('result', {}).get('alternatives', [])
+                if not alternatives:
+                    logger.error("No alternatives in YandexGPT response: %s", result)
+                    return {"standard_id": None, "confidence": 0.0,
+                            "reason": "LLM returned empty alternatives"}
+                llm_text = alternatives[0]['message']['text']
+                clean_text = re.sub(r'^```json\s*|\s*```$', '', llm_text.strip(),
+                                    flags=re.MULTILINE)
+                return json.loads(clean_text)
+
+        except httpx.HTTPStatusError as e:
+            # 4xx (кроме ретраибельных выше) — не повторяем
+            logger.error("YandexGPT HTTP error: %s - %s",
+                         e.response.status_code, e.response.text[:200])
+            return {"standard_id": None, "confidence": 0.0,
+                    "reason": f"LLM API Error: {e.response.status_code}"}
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_reason = f"LLM network error: {e}"
+            logger.warning("YandexGPT сеть/таймаут (попытка %d/%d): %s",
+                           attempt, max_attempts, e)
+            retry = True
+        except json.JSONDecodeError:
+            last_reason = "LLM returned invalid JSON"
+            logger.warning("YandexGPT невалидный JSON (попытка %d/%d)",
+                           attempt, max_attempts)
+            retry = True
+        except Exception as e:  # noqa: BLE001
+            last_reason = f"Unexpected error: {e}"
+            logger.exception("YandexGPT неожиданная ошибка (попытка %d/%d)",
+                             attempt, max_attempts)
+            retry = True
+
+        if retry and attempt < max_attempts:
+            await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
+        elif retry:
+            break
+
+    return {"standard_id": None, "confidence": 0.0, "reason": last_reason}
