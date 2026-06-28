@@ -360,8 +360,11 @@ class MappingService:
         by_llm = 0
         errors = []
 
-        for row in products:
+        total = len(products)
+        for i, row in enumerate(products, 1):
             product_id, product_name = row[0], row[1]
+            if i % 50 == 0 or i == total:
+                logger.info("auto-map: обработано %d/%d", i, total)
 
             try:
                 decision = await self.classify_product(
