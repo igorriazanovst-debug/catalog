@@ -3,12 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import {
   autoMap,
   listProducts,
+  listProviders,
   listSuppliers,
   pollJob,
   type ClassifyResult,
   type Job,
   type MappingStatus,
   type Product,
+  type Provider,
   type Supplier,
 } from "../api";
 import ReviewPanel from "../components/ReviewPanel";
@@ -37,6 +39,24 @@ export default function SupplierDetailPage() {
   const [classifyError, setClassifyError] = useState<string | null>(null);
   const [classifyDone, setClassifyDone] = useState<ClassifyResult | null>(null);
   const mapping = classifyJob?.status === "running";
+
+  const [providers, setProviders] = useState<Provider[] | null>(null);
+  const [provider, setProvider] = useState<string>("");
+
+  useEffect(() => {
+    listProviders()
+      .then((list) => {
+        setProviders(list);
+        // По умолчанию: дефолтный настроенный провайдер, иначе первый настроенный.
+        const def =
+          list.find((p) => p.default && p.configured) ||
+          list.find((p) => p.configured);
+        setProvider(def ? def.id : "");
+      })
+      .catch(() => setProviders([]));
+  }, []);
+
+  const selectedConfigured = providers?.find((p) => p.id === provider)?.configured ?? false;
 
   const reload = useCallback(async () => {
     setError(null);
@@ -77,6 +97,7 @@ export default function SupplierDetailPage() {
       const { job_id } = await autoMap({
         supplier_id: supplierId,
         only_unmapped: onlyUnmapped,
+        provider: provider || undefined,
       });
       const finished = await pollJob(job_id, setClassifyJob);
       if (finished.status === "done") {
@@ -123,8 +144,27 @@ export default function SupplierDetailPage() {
         </div>
       </div>
 
-      <div className="row-actions">
-        <button disabled={mapping} onClick={() => runAutoMap(true)}>
+      <div className="row-actions" style={{ alignItems: "center" }}>
+        <label className="muted" style={{ fontSize: 13 }}>
+          LLM-провайдер:{" "}
+          <select
+            value={provider}
+            disabled={mapping || !providers}
+            onChange={(e) => setProvider(e.target.value)}
+          >
+            {(providers ?? []).map((p) => (
+              <option key={p.id} value={p.id} disabled={!p.configured}>
+                {p.label}
+                {p.configured ? "" : " (не настроен)"}
+                {p.default ? " · по умолч." : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          disabled={mapping || !selectedConfigured}
+          onClick={() => runAutoMap(true)}
+        >
           {mapping ? (
             <>
               <span className="spinner" /> Классификация…
@@ -135,12 +175,21 @@ export default function SupplierDetailPage() {
         </button>
         <button
           className="secondary"
-          disabled={mapping}
+          disabled={mapping || !selectedConfigured}
           onClick={() => runAutoMap(false)}
         >
           Переклассифицировать все
         </button>
       </div>
+
+      {providers && !selectedConfigured && (
+        <div className="notice">
+          Выбранный провайдер не настроен на сервере (нет API-ключа). Добавьте ключ
+          в <span className="code">backend/.env</span> (например{" "}
+          <span className="code">GROQ_API_KEY=…</span>) и перезапустите сервер, либо
+          выберите другого провайдера.
+        </div>
+      )}
 
       {mapping && (
         <div className="notice">

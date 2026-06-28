@@ -283,7 +283,8 @@ class MappingService:
         return None
 
     async def classify_product(self, product_id: int, top_k: int = 20,
-                               llm_confidence_threshold: float = 0.7) -> dict:
+                               llm_confidence_threshold: float = 0.7,
+                               provider: str | None = None) -> dict:
         """Единая точка решения по товару: сначала детерминированный роутер,
         иначе гибридный ретрив + LLM-судья.
 
@@ -316,6 +317,7 @@ class MappingService:
             {"name": name, "description": description or "", "properties": properties or {}},
             [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
              for c in pool],
+            provider=provider,
         )
         # Сбой GPT (сеть/таймаут/5xx/конфиг) — это НЕ «нет подходящего стандарта».
         # Помечаем отдельно, чтобы авто-маппинг мог оборвать серию таких ошибок.
@@ -350,6 +352,7 @@ class MappingService:
         top_k: int = 20,
         supplier_id: int | None = None,
         only_unmapped: bool = False,
+        provider: str | None = None,        # LLM-провайдер: "yandex" | "groq"
         progress=None,                      # callable(processed, total, counters)
         max_consecutive_llm_errors: int = 100,
         **_legacy,  # поглощает устаревший threshold= из старых вызовов
@@ -416,6 +419,7 @@ class MappingService:
                 decision = await self.classify_product(
                     product_id, top_k=top_k,
                     llm_confidence_threshold=llm_confidence_threshold,
+                    provider=provider,
                 )
 
                 # Сбой GPT: считаем серию. Роутер (rule) GPT не трогает — на серию

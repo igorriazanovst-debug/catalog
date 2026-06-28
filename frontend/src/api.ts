@@ -28,6 +28,13 @@ export interface ClassifyResult {
   errors: string[];
 }
 
+export interface Provider {
+  id: string;
+  label: string;
+  configured: boolean;
+  default: boolean;
+}
+
 export type JobStatus = "running" | "done" | "error";
 
 export interface Job {
@@ -162,16 +169,21 @@ export function listProducts(params: {
   return jget<{ items: Product[] }>(`/api/products?${q}`).then((d) => d.items);
 }
 
+export const listProviders = () =>
+  jget<{ providers: Provider[] }>("/api/mapping/providers").then((d) => d.providers);
+
 export function autoMap(params: {
   supplier_id?: number;
   only_unmapped?: boolean;
   confidence_threshold?: number;
+  provider?: string;
 }): Promise<{ job_id: string }> {
   const q = new URLSearchParams();
   if (params.supplier_id != null) q.set("supplier_id", String(params.supplier_id));
   if (params.only_unmapped) q.set("only_unmapped", "true");
   if (params.confidence_threshold != null)
     q.set("confidence_threshold", String(params.confidence_threshold));
+  if (params.provider) q.set("provider", params.provider);
   return jpost<{ job_id: string }>(`/api/mapping/auto-map?${q}`);
 }
 
