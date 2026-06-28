@@ -1,14 +1,46 @@
 // Тонкий клиент над backend API. Все пути относительные — фронт и бэк на одном
 // origin (в dev /api проксируется Vite на uvicorn, см. vite.config.ts).
 
-export interface UploadResult {
-  status: string;
+// Запуск фоновой задачи импорта возвращает идентификатор задачи.
+export interface UploadStarted {
+  job_id: string;
   supplier_id: number;
   supplier_name: string;
-  products_imported: number;
-  products_updated: number;
-  auto_sku_assigned: number;
+}
+
+// Итог импорта (job.result для kind="import").
+export interface ImportResult {
+  imported: number;
+  updated: number;
+  auto_sku: number;
   errors: string[];
+}
+
+// Итог классификации (job.result для kind="classify").
+export interface ClassifyResult {
+  total_products: number;
+  auto_mapped: number;
+  needs_review: number;
+  no_match: number;
+  by_rule: number;
+  by_llm: number;
+  llm_errors: number;
+  errors: string[];
+}
+
+export type JobStatus = "running" | "done" | "error";
+
+export interface Job {
+  id: string;
+  kind: "import" | "classify";
+  status: JobStatus;
+  total: number;
+  processed: number;
+  counters: Record<string, number>;
+  message: string;
+  error: string | null;
+  result: ImportResult | ClassifyResult | null;
+  elapsed: number;
 }
 
 export interface Supplier {
@@ -43,16 +75,6 @@ export interface Product {
   standard_name: string | null;
   full_code: string | null;
   subsection_name: string | null;
-}
-
-export interface AutoMapResult {
-  total_products: number;
-  auto_mapped: number;
-  needs_review: number;
-  no_match: number;
-  by_rule: number;
-  by_llm: number;
-  errors: string[];
 }
 
 export interface Candidate {
@@ -90,7 +112,7 @@ export async function uploadPriceList(
   file: File,
   supplier: SupplierFields,
   onProgress?: (pct: number) => void
-): Promise<UploadResult> {
+): Promise<UploadStarted> {
   const form = new FormData();
   form.append("file", file);
   for (const [k, v] of Object.entries(supplier)) {
@@ -144,13 +166,41 @@ export function autoMap(params: {
   supplier_id?: number;
   only_unmapped?: boolean;
   confidence_threshold?: number;
-}): Promise<AutoMapResult> {
+}): Promise<{ job_id: string }> {
   const q = new URLSearchParams();
   if (params.supplier_id != null) q.set("supplier_id", String(params.supplier_id));
   if (params.only_unmapped) q.set("only_unmapped", "true");
   if (params.confidence_threshold != null)
     q.set("confidence_threshold", String(params.confidence_threshold));
-  return jpost<AutoMapResult>(`/api/mapping/auto-map?${q}`);
+  return jpost<{ job_id: string }>(`/api/mapping/auto-map?${q}`);
+}
+
+export const getJob = (jobId: string) => jget<Job>(`/api/jobs/${jobId}`);
+
+// Опрашивает задачу, вызывая onUpdate на каждом тике, пока статус != running.
+export function pollJob(
+  jobId: string,
+  onUpdate: (job: Job) => void,
+  intervalMs = 1200
+): Promise<Job> {
+  return new Promise((resolve, reject) => {
+    const tick = async () => {
+      let job: Job;
+      try {
+        job = await getJob(jobId);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      onUpdate(job);
+      if (job.status === "running") {
+        setTimeout(tick, intervalMs);
+      } else {
+        resolve(job);
+      }
+    };
+    tick();
+  });
 }
 
 export const productCandidates = (productId: number) =>

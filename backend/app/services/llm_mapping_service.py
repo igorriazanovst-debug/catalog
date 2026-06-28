@@ -99,7 +99,8 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict]) -> dict:
     """
     if not settings.YANDEX_GPT_API_KEY or not settings.YANDEX_GPT_FOLDER_ID:
         logger.warning("YandexGPT API key or Folder ID is not set. Skipping LLM fallback.")
-        return {"standard_id": None, "confidence": 0.0, "reason": "LLM not configured"}
+        return {"standard_id": None, "confidence": 0.0,
+                "reason": "LLM not configured", "error": True}
 
     # Формируем список кандидатов для промпта
     candidates_text = "\n".join([f"- ID: {c['id']}, Название: {c['standard_name']}" for c in candidates])
@@ -160,7 +161,7 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict]) -> dict:
                 if not alternatives:
                     logger.error("No alternatives in YandexGPT response: %s", result)
                     return {"standard_id": None, "confidence": 0.0,
-                            "reason": "LLM returned empty alternatives"}
+                            "reason": "LLM returned empty alternatives", "error": True}
                 llm_text = alternatives[0]['message']['text']
                 clean_text = re.sub(r'^```json\s*|\s*```$', '', llm_text.strip(),
                                     flags=re.MULTILINE)
@@ -171,7 +172,7 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict]) -> dict:
             logger.error("YandexGPT HTTP error: %s - %s",
                          e.response.status_code, e.response.text[:200])
             return {"standard_id": None, "confidence": 0.0,
-                    "reason": f"LLM API Error: {e.response.status_code}"}
+                    "reason": f"LLM API Error: {e.response.status_code}", "error": True}
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_reason = f"LLM network error: {e}"
             logger.warning("YandexGPT сеть/таймаут (попытка %d/%d): %s",
@@ -193,4 +194,5 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict]) -> dict:
         elif retry:
             break
 
-    return {"standard_id": None, "confidence": 0.0, "reason": last_reason}
+    # Все попытки исчерпаны — это сбой GPT (а не «нет подходящего стандарта»).
+    return {"standard_id": None, "confidence": 0.0, "reason": last_reason, "error": True}

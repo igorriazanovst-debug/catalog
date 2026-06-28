@@ -44,6 +44,10 @@ FUNCTION_WORDS = {
 CODE_TABLES_GENERIC = "2.17"      # Комплект демонстрационных учебных таблиц (по предметной области)
 CODE_TABLES_PHYSICS = "2.14.137"  # Комплект демонстрационных учебных таблиц (Кабинет физики)
 
+
+class LLMUnavailableError(RuntimeError):
+    """GPT недоступен: слишком много ошибок подряд — авто-маппинг прерван."""
+
 # Процессные синглтоны (ленивая инициализация)
 _embedding_model = None
 _morph = None
@@ -313,6 +317,12 @@ class MappingService:
             [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
              for c in pool],
         )
+        # Сбой GPT (сеть/таймаут/5xx/конфиг) — это НЕ «нет подходящего стандарта».
+        # Помечаем отдельно, чтобы авто-маппинг мог оборвать серию таких ошибок.
+        if llm.get("error"):
+            return {"standard_id": None, "score": 0.0,
+                    "reason": llm.get("reason", "сбой LLM"),
+                    "method": "error", "is_manual": True, "llm_error": True}
         llm_id = llm.get("standard_id")
         llm_conf = llm.get("confidence", 0.0) or 0.0
         if llm_id is None:
@@ -340,6 +350,8 @@ class MappingService:
         top_k: int = 20,
         supplier_id: int | None = None,
         only_unmapped: bool = False,
+        progress=None,                      # callable(processed, total, counters)
+        max_consecutive_llm_errors: int = 100,
         **_legacy,  # поглощает устаревший threshold= из старых вызовов
     ) -> dict:
         # Опциональные фильтры: товары конкретного поставщика и/или только те,
@@ -382,9 +394,19 @@ class MappingService:
         no_match = 0
         by_rule = 0
         by_llm = 0
+        llm_errors = 0
+        consecutive_llm_errors = 0
         errors = []
 
         total = len(products)
+
+        def snapshot():
+            return {
+                "auto_mapped": auto_mapped, "needs_review": needs_review,
+                "no_match": no_match, "by_rule": by_rule, "by_llm": by_llm,
+                "llm_errors": llm_errors, "errors": len(errors),
+            }
+
         for i, row in enumerate(products, 1):
             product_id, product_name = row[0], row[1]
             if i % 50 == 0 or i == total:
@@ -396,8 +418,32 @@ class MappingService:
                     llm_confidence_threshold=llm_confidence_threshold,
                 )
 
+                # Сбой GPT: считаем серию. Роутер (rule) GPT не трогает — на серию
+                # не влияет; честный ответ модели (в т.ч. null) серию обнуляет.
+                if decision.get("llm_error"):
+                    llm_errors += 1
+                    consecutive_llm_errors += 1
+                    errors.append(f"Товар {product_id}: сбой LLM — {decision['reason']}")
+                    if consecutive_llm_errors >= max_consecutive_llm_errors:
+                        if progress:
+                            progress(i, total, snapshot())
+                        raise LLMUnavailableError(
+                            f"GPT недоступен: {consecutive_llm_errors} ошибок подряд. "
+                            f"Последняя: {decision['reason']}. Обработано {i} из {total}, "
+                            f"размечено авто {auto_mapped} / на проверку {needs_review}. "
+                            f"Проверьте ключи YandexGPT и квоту, затем запустите снова."
+                        )
+                    if progress:
+                        progress(i, total, snapshot())
+                    continue
+
+                if decision["method"] != "rule":
+                    consecutive_llm_errors = 0  # GPT ответил — серия прервана
+
                 if decision["standard_id"] is None:
                     no_match += 1
+                    if progress:
+                        progress(i, total, snapshot())
                     continue
 
                 await self._upsert_mapping(
@@ -415,18 +461,24 @@ class MappingService:
                 else:
                     auto_mapped += 1
 
+            except LLMUnavailableError:
+                raise
             except Exception as e:
                 logger.exception("Ошибка маппинга товара %s", product_id)
                 errors.append(f"Товар {product_id}: {e}")
                 await self.db.rollback()
 
+            if progress:
+                progress(i, total, snapshot())
+
         return {
-            "total_products": len(products),
+            "total_products": total,
             "auto_mapped": auto_mapped,
             "needs_review": needs_review,
             "no_match": no_match,
             "by_rule": by_rule,
             "by_llm": by_llm,
+            "llm_errors": llm_errors,
             "errors": errors,
         }
 

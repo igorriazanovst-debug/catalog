@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import re
 import pandas as pd
@@ -9,10 +10,31 @@ from sentence_transformers import SentenceTransformer
 # у которых поставщик не указал «Артикул».
 INTERNAL_SKU_PREFIX = "AUTO-"
 
+# Модель эмбеддингов — синглтон на процесс (грузится ~минуту, переиспользуется
+# между запросами/импортами).
+_EMB_MODEL = None
+
+
+def get_embedding_model() -> SentenceTransformer:
+    global _EMB_MODEL
+    if _EMB_MODEL is None:
+        _EMB_MODEL = SentenceTransformer(
+            "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+        )
+    return _EMB_MODEL
+
+
 class ProductService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.embedding_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+
+    @property
+    def embedding_model(self) -> SentenceTransformer:
+        # Ленивая модель-синглтон: конструктор ProductService остаётся дешёвым
+        # (важно, когда сервис нужен лишь для get_or_create_supplier в синхронной
+        # части запроса — модель грузить не нужно). Тяжёлую загрузку прогреваем
+        # в фоне через asyncio.to_thread(get_embedding_model).
+        return get_embedding_model()
 
     @staticmethod
     def _cell(row, key: str, default: str = "") -> str:
@@ -87,7 +109,10 @@ class ProductService:
         await self.db.commit()
         return supplier_id
     
-    async def import_products_from_csv(self, df: pd.DataFrame, supplier_id: int) -> dict:
+    async def import_products_from_csv(self, df: pd.DataFrame, supplier_id: int,
+                                       progress=None) -> dict:
+        """progress: callable(processed, total, counters, message) — для
+        индикации прогресса в UI (фоновая задача)."""
         imported = 0
         updated = 0
         auto_sku = 0  # сколько товаров получили внутренний артикул
@@ -97,7 +122,15 @@ class ProductService:
 
         # Убедимся, что колонки без лишних пробелов
         df.columns = [col.strip() for col in df.columns]
-        
+        total = len(df)
+
+        def report(processed, message=""):
+            if progress:
+                progress(processed, total,
+                         {"imported": imported, "updated": updated,
+                          "auto_sku": auto_sku, "errors": len(errors)},
+                         message)
+
         for idx, row in df.iterrows():
             try:
                 sku = self._cell(row, 'Артикул')
@@ -196,13 +229,21 @@ class ProductService:
                 errors.append(f"Строка {idx + 1}: {str(e)}")
                 await self.db.rollback()
 
+            # Прогресс по строкам (не на каждой — каждые 10 и в конце).
+            if (idx + 1) % 10 == 0 or (idx + 1) == total:
+                report(idx + 1)
+
         # Батч-эмбеддинг всех новых товаров одним вызовом модели (на порядок
-        # быстрее, чем encode по одному в цикле). Товары уже закоммичены;
-        # если процесс упадёт здесь — эмбеддинги дозальёт
-        # scripts/regenerate_product_embeddings.py.
+        # быстрее, чем encode по одному в цикле). encode — CPU-bound и блокирует
+        # event loop, поэтому считаем в отдельном потоке (await to_thread), чтобы
+        # опрос статуса оставался отзывчивым. Товары уже закоммичены; если процесс
+        # упадёт здесь — эмбеддинги дозальёт scripts/regenerate_product_embeddings.py.
         if to_embed:
+            report(total, message=f"Векторизация {len(to_embed)} товаров…")
             names = [n for _, n in to_embed]
-            vectors = self.embedding_model.encode(names, batch_size=64)
+            vectors = await asyncio.to_thread(
+                self.embedding_model.encode, names, batch_size=64
+            )
             for (product_id, _), vec in zip(to_embed, vectors):
                 emb_str = "[" + ",".join(str(x) for x in vec.tolist()) + "]"
                 await self.db.execute(

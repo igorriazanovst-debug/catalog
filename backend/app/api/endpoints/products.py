@@ -1,22 +1,19 @@
+import asyncio
+import io
+
+import pandas as pd
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-import pandas as pd
-import io
-from app.core.database import get_db
-from app.services.product_service import ProductService
-from sentence_transformers import SentenceTransformer
+
+from app.core.database import get_db, async_session
+from app.services.product_service import ProductService, get_embedding_model
+from app.services.jobs import jobs, run_job
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
-# Глобальная модель для эмбеддингов (загружается один раз)
-embedding_model = None
+REQUIRED_COLUMNS = ['Артикул', 'Наименование', 'Себестоимость', 'РРЦ']
 
-def get_embedding_model():
-    global embedding_model
-    if embedding_model is None:
-        embedding_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-    return embedding_model
 
 @router.post("/upload")
 async def upload_products(
@@ -30,53 +27,53 @@ async def upload_products(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Загрузка товаров из CSV файла с данными поставщика
+    Загрузка товаров из CSV. Файл валидируется и парсится синхронно (быстро),
+    а сам импорт (вставка + векторизация тысяч товаров) запускается В ФОНЕ:
+    возвращается job_id, прогресс/итог — через GET /api/jobs/{job_id}.
+    Итог (job.result): imported, updated, auto_sku, errors[].
     """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Файл должен быть в формате CSV")
-    
+
     try:
-        # Читаем CSV
         content = await file.read()
         df = pd.read_csv(io.BytesIO(content), sep=';', encoding='utf-8')
-        
-        # Проверяем обязательные колонки
-        required_columns = ['Артикул', 'Наименование', 'Себестоимость', 'РРЦ']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Отсутствуют обязательные колонки: {', '.join(missing_columns)}"
-            )
-        
-        # Создаем или находим поставщика
-        supplier_service = ProductService(db)
-        supplier_id = await supplier_service.get_or_create_supplier(
-            name=supplier_name,
-            short_name=supplier_short_name,
-            inn=supplier_inn,
-            contact_person=supplier_contact_person,
-            phone=supplier_phone,
-            email=supplier_email
-        )
-        
-        # Импортируем товары
-        result = await supplier_service.import_products_from_csv(df, supplier_id)
-        
-        return {
-            "status": "success",
-            "supplier_id": supplier_id,
-            "supplier_name": supplier_name,
-            "products_imported": result['imported'],
-            "products_updated": result['updated'],
-            "auto_sku_assigned": result['auto_sku'],
-            "errors": result['errors']
-        }
-        
     except pd.errors.EmptyDataError:
         raise HTTPException(status_code=400, detail="CSV файл пустой")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при обработке файла: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Не удалось прочитать CSV: {str(e)}")
+
+    missing_columns = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing_columns:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Отсутствуют обязательные колонки: {', '.join(missing_columns)}"
+        )
+
+    # Поставщика создаём/находим сразу (быстро, нужен в ответе).
+    supplier_service = ProductService(db)
+    supplier_id = await supplier_service.get_or_create_supplier(
+        name=supplier_name, short_name=supplier_short_name, inn=supplier_inn,
+        contact_person=supplier_contact_person, phone=supplier_phone,
+        email=supplier_email,
+    )
+
+    job = jobs.create("import")
+    job.total = len(df)
+
+    async def body(job):
+        # Прогреваем модель эмбеддингов в потоке (загрузка ~минуту, CPU-bound),
+        # чтобы не блокировать event loop и опрос статуса.
+        await asyncio.to_thread(get_embedding_model)
+        async with async_session() as bg_db:
+            svc = ProductService(bg_db)
+            return await svc.import_products_from_csv(
+                df, supplier_id,
+                progress=lambda p, t, c, m: job.set_progress(p, t, c, m),
+            )
+
+    run_job(job, body)
+    return {"job_id": job.id, "supplier_id": supplier_id, "supplier_name": supplier_name}
 
 
 @router.get("/suppliers")

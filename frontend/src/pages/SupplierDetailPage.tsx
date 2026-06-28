@@ -4,12 +4,15 @@ import {
   autoMap,
   listProducts,
   listSuppliers,
-  type AutoMapResult,
+  pollJob,
+  type ClassifyResult,
+  type Job,
   type MappingStatus,
   type Product,
   type Supplier,
 } from "../api";
 import ReviewPanel from "../components/ReviewPanel";
+import JobProgress from "../components/JobProgress";
 
 const STATUS_LABEL: Record<MappingStatus, string> = {
   auto: "Авто",
@@ -30,8 +33,10 @@ export default function SupplierDetailPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [reviewing, setReviewing] = useState<Product | null>(null);
 
-  const [mapping, setMapping] = useState(false);
-  const [mapResult, setMapResult] = useState<AutoMapResult | null>(null);
+  const [classifyJob, setClassifyJob] = useState<Job | null>(null);
+  const [classifyError, setClassifyError] = useState<string | null>(null);
+  const [classifyDone, setClassifyDone] = useState<ClassifyResult | null>(null);
+  const mapping = classifyJob?.status === "running";
 
   const reload = useCallback(async () => {
     setError(null);
@@ -64,20 +69,25 @@ export default function SupplierDetailPage() {
   );
 
   async function runAutoMap(onlyUnmapped: boolean) {
-    setMapping(true);
-    setMapResult(null);
+    setClassifyJob(null);
+    setClassifyError(null);
+    setClassifyDone(null);
     setError(null);
     try {
-      const res = await autoMap({
+      const { job_id } = await autoMap({
         supplier_id: supplierId,
         only_unmapped: onlyUnmapped,
       });
-      setMapResult(res);
+      const finished = await pollJob(job_id, setClassifyJob);
+      if (finished.status === "done") {
+        setClassifyDone(finished.result as ClassifyResult);
+      } else {
+        // Серия ошибок GPT / иной сбой — показываем причину явно.
+        setClassifyError(finished.error || "Классификация завершилась с ошибкой.");
+      }
       await reload();
     } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setMapping(false);
+      setClassifyError((e as Error).message);
     }
   }
 
@@ -134,20 +144,31 @@ export default function SupplierDetailPage() {
 
       {mapping && (
         <div className="notice">
-          Идёт классификация: гибридный ретрив + LLM-судья (YandexGPT). На больших
-          прайсах это занимает минуты; первый товар грузит модель эмбеддингов
-          (~минуту). Не закрывайте вкладку.
+          Идёт классификация: гибридный ретрив + LLM-судья (YandexGPT). Прогресс
+          обновляется автоматически; можно не закрывать вкладку. Если GPT начнёт
+          стабильно сбоить (100 ошибок подряд), процесс остановится с понятной
+          ошибкой.
         </div>
       )}
 
-      {mapResult && (
+      {classifyJob && classifyJob.status === "running" && (
+        <JobProgress job={classifyJob} />
+      )}
+
+      {classifyError && (
+        <div className="error">
+          Классификация прервана: {classifyError}
+        </div>
+      )}
+
+      {classifyDone && (
         <div className="notice">
-          Готово: всего {mapResult.total_products}, авто {mapResult.auto_mapped},
-          на проверку {mapResult.needs_review}, без подходящего{" "}
-          {mapResult.no_match} (правило: {mapResult.by_rule}, LLM:{" "}
-          {mapResult.by_llm}).
-          {mapResult.errors.length > 0 && (
-            <> Ошибок: {mapResult.errors.length}.</>
+          Готово: всего {classifyDone.total_products}, авто{" "}
+          {classifyDone.auto_mapped}, на проверку {classifyDone.needs_review},
+          без подходящего {classifyDone.no_match} (правило: {classifyDone.by_rule},
+          LLM: {classifyDone.by_llm}).
+          {classifyDone.llm_errors > 0 && (
+            <> Ошибок GPT: {classifyDone.llm_errors}.</>
           )}
         </div>
       )}

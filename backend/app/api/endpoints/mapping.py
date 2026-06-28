@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.database import get_db
+from app.core.database import get_db, async_session
 from app.services.mapping_service import MappingService
+from app.services.jobs import jobs, run_job
 
 router = APIRouter(prefix="/api/mapping", tags=["mapping"])
 
@@ -11,23 +12,35 @@ async def auto_map_products(
     top_k: int = 20,
     supplier_id: int | None = None,
     only_unmapped: bool = False,
-    db: AsyncSession = Depends(get_db)
 ):
     """
-    Автоматический маппинг товаров: гибридный ретрив (вектор ∪ keyword)
-    -> LLM-судья. confidence_threshold — порог уверенности LLM для авто-маппинга
-    (ниже порога товар помечается на ручную проверку).
+    Запускает автоматический маппинг товаров В ФОНЕ и сразу возвращает job_id.
+    Прогресс/итог: GET /api/jobs/{job_id}.
+
+    Пайплайн: гибридный ретрив (вектор ∪ keyword) -> LLM-судья. Маппинг тысяч
+    товаров через LLM долгий, поэтому синхронный запрос упирался бы в таймаут
+    шлюза (502). Если GPT даёт 100 ошибок подряд — задача завершается с понятной
+    ошибкой (job.status='error', job.error=...).
 
     supplier_id — ограничить маппинг товарами одного поставщика
     (для «классифицировать только что загруженный прайс»).
     only_unmapped — маппить только товары без существующего маппинга.
     """
-    service = MappingService(db)
-    result = await service.auto_map_all_products(
-        llm_confidence_threshold=confidence_threshold, top_k=top_k,
-        supplier_id=supplier_id, only_unmapped=only_unmapped,
-    )
-    return result
+    job = jobs.create("classify")
+
+    async def body(job):
+        async with async_session() as db:
+            service = MappingService(db)
+            return await service.auto_map_all_products(
+                llm_confidence_threshold=confidence_threshold, top_k=top_k,
+                supplier_id=supplier_id, only_unmapped=only_unmapped,
+                progress=lambda p, t, c: job.set_progress(p, t, c),
+                max_consecutive_llm_errors=100,
+            )
+
+    run_job(job, body)
+    return {"job_id": job.id}
+
 
 @router.get("/candidates/{product_id}")
 async def get_mapping_candidates(
@@ -35,16 +48,9 @@ async def get_mapping_candidates(
     top_k: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Получить кандидатов для маппинга конкретного товара
-    """
+    """Кандидаты для маппинга конкретного товара (без записи в БД)."""
     service = MappingService(db)
     candidates = await service.map_product_to_standards(product_id, top_k=top_k)
-    
     if not candidates:
         raise HTTPException(status_code=404, detail="Товар не найден или нет кандидатов")
-    
-    return {
-        "product_id": product_id,
-        "candidates": candidates
-    }
+    return {"product_id": product_id, "candidates": candidates}

@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse, Response
 
-from app.api.endpoints import products, mapping, review
+from app.api.endpoints import products, mapping, review, jobs
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ app = FastAPI(title="School Equipment Catalog")
 app.include_router(products.router)
 app.include_router(mapping.router)
 app.include_router(review.router)
+app.include_router(jobs.router)
 
 
 @app.get("/")

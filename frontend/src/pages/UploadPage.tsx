@@ -1,6 +1,13 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { uploadPriceList, type UploadResult, type SupplierFields } from "../api";
+import {
+  pollJob,
+  uploadPriceList,
+  type ImportResult,
+  type Job,
+  type SupplierFields,
+} from "../api";
+import JobProgress from "../components/JobProgress";
 
 const EMPTY: SupplierFields = {
   supplier_name: "",
@@ -11,14 +18,18 @@ const EMPTY: SupplierFields = {
   supplier_email: "",
 };
 
+type Phase = "form" | "running" | "done" | "failed";
+
 export default function UploadPage() {
   const [fields, setFields] = useState<SupplierFields>(EMPTY);
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<Phase>("form");
+  const [uploadPct, setUploadPct] = useState(0);
+  const [job, setJob] = useState<Job | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [supplierId, setSupplierId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<UploadResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -34,10 +45,19 @@ export default function UploadPage() {
     setFile(f);
   };
 
+  function reset() {
+    setPhase("form");
+    setFile(null);
+    setFields(EMPTY);
+    setJob(null);
+    setResult(null);
+    setUploadPct(0);
+    setError(null);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setResult(null);
     if (!fields.supplier_name.trim()) {
       setError("Укажите название поставщика.");
       return;
@@ -46,34 +66,38 @@ export default function UploadPage() {
       setError("Прикрепите CSV-файл прайс-листа.");
       return;
     }
-    setBusy(true);
-    setProgress(0);
+    setPhase("running");
+    setUploadPct(0);
+    setJob(null);
     try {
-      const res = await uploadPriceList(file, fields, setProgress);
-      setResult(res);
+      const started = await uploadPriceList(file, fields, setUploadPct);
+      setSupplierId(started.supplier_id);
+      const finished = await pollJob(started.job_id, setJob);
+      if (finished.status === "done") {
+        setResult(finished.result as ImportResult);
+        setPhase("done");
+      } else {
+        setError(finished.error || "Импорт завершился с ошибкой.");
+        setPhase("failed");
+      }
     } catch (err) {
       setError((err as Error).message);
-    } finally {
-      setBusy(false);
-      setProgress(null);
+      setPhase("failed");
     }
   }
 
-  if (result) {
+  if (phase === "done" && result) {
     return (
       <>
         <h1>Прайс-лист загружен</h1>
         <div className="card">
-          <p>
-            Поставщик: <b>{result.supplier_name}</b>
-          </p>
           <div className="stats">
             <div className="stat">
-              <div className="n">{result.products_imported}</div>
+              <div className="n">{result.imported}</div>
               <div className="l">новых товаров</div>
             </div>
             <div className="stat">
-              <div className="n">{result.products_updated}</div>
+              <div className="n">{result.updated}</div>
               <div className="l">обновлено</div>
             </div>
             <div className="stat">
@@ -84,10 +108,10 @@ export default function UploadPage() {
             </div>
           </div>
 
-          {result.auto_sku_assigned > 0 && (
+          {result.auto_sku > 0 && (
             <div className="notice">
-              {result.auto_sku_assigned}{" "}
-              {result.auto_sku_assigned === 1
+              {result.auto_sku}{" "}
+              {result.auto_sku === 1
                 ? "товару присвоен внутренний артикул"
                 : "товарам присвоены внутренние артикулы"}{" "}
               (в прайсе не был указан «Артикул»). Формат:{" "}
@@ -109,21 +133,44 @@ export default function UploadPage() {
           )}
 
           <div className="row-actions" style={{ marginTop: 16 }}>
-            <button onClick={() => navigate(`/supplier/${result.supplier_id}`)}>
-              Перейти к классификации →
-            </button>
-            <button
-              className="secondary"
-              onClick={() => {
-                setResult(null);
-                setFile(null);
-                setFields(EMPTY);
-              }}
-            >
+            {supplierId != null && (
+              <button onClick={() => navigate(`/supplier/${supplierId}`)}>
+                Перейти к классификации →
+              </button>
+            )}
+            <button className="secondary" onClick={reset}>
               Загрузить ещё один
             </button>
           </div>
         </div>
+      </>
+    );
+  }
+
+  if (phase === "running") {
+    return (
+      <>
+        <h1>Загрузка прайс-листа</h1>
+        {uploadPct < 100 && !job && (
+          <div className="card">
+            <div className="muted" style={{ fontSize: 13 }}>
+              Отправка файла на сервер… {uploadPct}%
+            </div>
+            <div className="progress">
+              <div style={{ width: `${uploadPct}%` }} />
+            </div>
+          </div>
+        )}
+        {(uploadPct >= 100 || job) && !job && (
+          <div className="card">
+            <span className="spinner" /> Файл принят, запуск импорта…
+          </div>
+        )}
+        {job && <JobProgress job={job} />}
+        <p className="muted">
+          Импорт идёт в фоне (вставка + векторизация товаров). Можно не закрывать
+          вкладку — прогресс обновляется автоматически.
+        </p>
       </>
     );
   }
@@ -231,24 +278,10 @@ export default function UploadPage() {
           />
         </div>
 
-        {progress != null && (
-          <div className="progress">
-            <div style={{ width: `${progress}%` }} />
-          </div>
-        )}
-
         {error && <div className="error">{error}</div>}
 
         <div className="row-actions" style={{ marginTop: 12 }}>
-          <button type="submit" disabled={busy}>
-            {busy ? (
-              <>
-                <span className="spinner" /> Загрузка…
-              </>
-            ) : (
-              "Загрузить прайс"
-            )}
-          </button>
+          <button type="submit">Загрузить прайс</button>
         </div>
       </form>
 
