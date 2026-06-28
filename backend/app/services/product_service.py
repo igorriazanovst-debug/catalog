@@ -130,33 +130,36 @@ class ProductService:
                     sku = self._internal_sku(name, manufacturer)
                     auto_sku += 1
 
+                # Матчинг В РАМКАХ ПОСТАВЩИКА: товар считается «уже импортированным»
+                # только если ЭТОТ поставщик уже привязан к товару с таким
+                # артикулом. Одинаковый артикул у разных поставщиков = разные
+                # товары (разные предложения), каждый классифицируется отдельно.
                 result = await self.db.execute(
-                    text("SELECT id FROM products WHERE sku = :sku"),
-                    {"sku": sku}
+                    text("""
+                        SELECT p.id FROM products p
+                        JOIN supplier_products sp
+                          ON sp.product_id = p.id AND sp.supplier_id = :supplier_id
+                        WHERE p.sku = :sku
+                        LIMIT 1
+                    """),
+                    {"sku": sku, "supplier_id": supplier_id}
                 )
                 existing_product = result.fetchone()
-                
+
                 if existing_product:
+                    # Повторная загрузка тем же поставщиком — обновляем цену.
                     product_id = existing_product[0]
-                    result = await self.db.execute(
-                        text("SELECT id FROM supplier_products WHERE supplier_id = :supplier_id AND product_id = :product_id"),
-                        {"supplier_id": supplier_id, "product_id": product_id}
+                    await self.db.execute(
+                        text("""
+                            UPDATE supplier_products
+                            SET cost_price = :cost_price, retail_price = :retail_price,
+                                supplier_sku = :supplier_sku
+                            WHERE supplier_id = :supplier_id AND product_id = :product_id
+                        """),
+                        {"cost_price": cost_price, "retail_price": retail_price,
+                         "supplier_sku": supplier_sku, "supplier_id": supplier_id,
+                         "product_id": product_id}
                     )
-                    existing_link = result.fetchone()
-                    
-                    if existing_link:
-                        await self.db.execute(
-                            text("UPDATE supplier_products SET cost_price = :cost_price, retail_price = :retail_price WHERE id = :id"),
-                            {"cost_price": cost_price, "retail_price": retail_price, "id": existing_link[0]}
-                        )
-                    else:
-                        await self.db.execute(
-                            text("""
-                                INSERT INTO supplier_products (supplier_id, product_id, supplier_sku, cost_price, retail_price)
-                                VALUES (:supplier_id, :product_id, :supplier_sku, :cost_price, :retail_price)
-                            """),
-                            {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": supplier_sku, "cost_price": cost_price, "retail_price": retail_price}
-                        )
                     updated += 1
                 else:
                     result = await self.db.execute(

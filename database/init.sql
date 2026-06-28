@@ -19,9 +19,12 @@ CREATE TABLE industry_standards (
 );
 
 -- Таблица товаров
+-- ВНИМАНИЕ: sku НЕ глобально уникален. Товары — per-supplier: один и тот же
+-- артикул у разных поставщиков = разные товары (разные предложения). Уникальность
+-- предложения обеспечивает supplier_products UNIQUE(supplier_id, product_id).
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
-    sku VARCHAR(100) NOT NULL UNIQUE,
+    sku VARCHAR(100) NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
     unit VARCHAR(50) DEFAULT 'шт',
