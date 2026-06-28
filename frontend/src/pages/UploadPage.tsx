@@ -84,6 +84,17 @@ export default function UploadPage() {
             </div>
           </div>
 
+          {result.auto_sku_assigned > 0 && (
+            <div className="notice">
+              {result.auto_sku_assigned}{" "}
+              {result.auto_sku_assigned === 1
+                ? "товару присвоен внутренний артикул"
+                : "товарам присвоены внутренние артикулы"}{" "}
+              (в прайсе не был указан «Артикул»). Формат:{" "}
+              <span className="code">AUTO-xxxxxxxxxx</span>.
+            </div>
+          )}
+
           {result.errors.length > 0 && (
             <details>
               <summary className="muted" style={{ cursor: "pointer" }}>

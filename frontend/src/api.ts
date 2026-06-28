@@ -7,6 +7,7 @@ export interface UploadResult {
   supplier_name: string;
   products_imported: number;
   products_updated: number;
+  auto_sku_assigned: number;
   errors: string[];
 }
 

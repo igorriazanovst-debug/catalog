@@ -1,14 +1,42 @@
+import hashlib
 import re
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from sentence_transformers import SentenceTransformer
 
+# Префикс внутреннего (авто-сгенерированного) артикула для товаров,
+# у которых поставщик не указал «Артикул».
+INTERNAL_SKU_PREFIX = "AUTO-"
+
 class ProductService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.embedding_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
-    
+
+    @staticmethod
+    def _cell(row, key: str, default: str = "") -> str:
+        """NaN-безопасное чтение ячейки. Пустая ячейка CSV читается pandas как
+        NaN, а str(NaN) == 'nan' — поэтому без этой нормализации пустые поля
+        превращались в строку 'nan'. Возвращает default, если значение
+        отсутствует/NaN/пустое после strip."""
+        val = row.get(key)
+        if val is None or pd.isna(val):
+            return default
+        s = str(val).strip()
+        return s if s else default
+
+    @staticmethod
+    def _internal_sku(name: str, manufacturer: str | None) -> str:
+        """Детерминированный внутренний артикул для товара без «Артикула».
+        Основан на имени+производителе, поэтому повторная загрузка того же
+        прайса не плодит дубли (тот же товар → тот же артикул → ветка
+        'существующий')."""
+        basis = f"{name}|{manufacturer or ''}".lower()
+        digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+        return f"{INTERNAL_SKU_PREFIX}{digest}"
+
+
     def parse_price(self, price_str) -> float:
         """Надежный парсер цен: убирает ₽, пробелы, буквы, меняет , на ."""
         if pd.isna(price_str):
@@ -62,36 +90,46 @@ class ProductService:
     async def import_products_from_csv(self, df: pd.DataFrame, supplier_id: int) -> dict:
         imported = 0
         updated = 0
+        auto_sku = 0  # сколько товаров получили внутренний артикул
         errors = []
-        
+
         # Убедимся, что колонки без лишних пробелов
         df.columns = [col.strip() for col in df.columns]
         
         for idx, row in df.iterrows():
             try:
-                sku = str(row.get('Артикул', '')).strip()
-                name = str(row.get('Наименование', '')).strip()
-                description = str(row.get('Описание', '')).strip() if pd.notna(row.get('Описание')) else None
-                unit = str(row.get('Ед. изм.', 'шт')).strip()
-                
+                sku = self._cell(row, 'Артикул')
+                name = self._cell(row, 'Наименование')
+                description = self._cell(row, 'Описание') or None
+                unit = self._cell(row, 'Ед. изм.', 'шт')
+                manufacturer = self._cell(row, 'Производитель') or None
+
                 cost_price = self.parse_price(row.get('Себестоимость'))
                 retail_price = self.parse_price(row.get('РРЦ'))
-                
+
                 if cost_price == 0 or retail_price == 0:
                     errors.append(f"Строка {idx + 1}: некорректные цены (Себестоимость={row.get('Себестоимость')}, РРЦ={row.get('РРЦ')})")
                     continue
-                
+
                 vat_included = False
                 if pd.notna(row.get('НДС включен')):
                     vat_value = str(row.get('НДС включен')).strip().lower()
                     vat_included = vat_value in ['да', 'yes', 'true', '1']
-                
-                manufacturer = str(row.get('Производитель', '')).strip() if pd.notna(row.get('Производитель')) else None
-                
-                if not sku or not name:
-                    errors.append(f"Строка {idx + 1}: отсутствуют Артикул или Наименование")
+
+                # Наименование обязательно: без него товар бессмысленен и нечем
+                # сгенерировать внутренний артикул.
+                if not name:
+                    errors.append(f"Строка {idx + 1}: отсутствует Наименование")
                     continue
-                
+
+                # Пустой «Артикул» — не ошибка: присваиваем внутренний
+                # (детерминированный по имени). supplier_sku при этом NULL,
+                # т.к. поставщик артикул не предоставил.
+                supplier_sku = sku or None
+                if not sku:
+                    sku = self._internal_sku(name, manufacturer)
+                    auto_sku += 1
+
                 result = await self.db.execute(
                     text("SELECT id FROM products WHERE sku = :sku"),
                     {"sku": sku}
@@ -117,7 +155,7 @@ class ProductService:
                                 INSERT INTO supplier_products (supplier_id, product_id, supplier_sku, cost_price, retail_price)
                                 VALUES (:supplier_id, :product_id, :supplier_sku, :cost_price, :retail_price)
                             """),
-                            {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": sku, "cost_price": cost_price, "retail_price": retail_price}
+                            {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": supplier_sku, "cost_price": cost_price, "retail_price": retail_price}
                         )
                     updated += 1
                 else:
@@ -139,9 +177,9 @@ class ProductService:
                             INSERT INTO supplier_products (supplier_id, product_id, supplier_sku, cost_price, retail_price)
                             VALUES (:supplier_id, :product_id, :supplier_sku, :cost_price, :retail_price)
                         """),
-                        {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": sku, "cost_price": cost_price, "retail_price": retail_price}
+                        {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": supplier_sku, "cost_price": cost_price, "retail_price": retail_price}
                     )
-                    
+
                     embedding = self.embedding_model.encode(name)
                     emb_str = "[" + ",".join(str(x) for x in embedding.tolist()) + "]"
                     
@@ -157,4 +195,5 @@ class ProductService:
                 errors.append(f"Строка {idx + 1}: {str(e)}")
                 await self.db.rollback()
         
-        return {"imported": imported, "updated": updated, "errors": errors}
+        return {"imported": imported, "updated": updated,
+                "auto_sku": auto_sku, "errors": errors}

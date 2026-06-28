@@ -93,6 +93,7 @@ async def main(args):
     print("=" * 50)
     print(f"Импортировано новых:  {result['imported']}")
     print(f"Обновлено:            {result['updated']}")
+    print(f"Внутр. артикул выдан: {result.get('auto_sku', 0)}")
     print(f"Ошибок:               {len(result['errors'])}")
     for err in result["errors"]:
         print(f"  - {err}")

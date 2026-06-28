@@ -69,6 +69,7 @@ async def upload_products(
             "supplier_name": supplier_name,
             "products_imported": result['imported'],
             "products_updated": result['updated'],
+            "auto_sku_assigned": result['auto_sku'],
             "errors": result['errors']
         }
         
