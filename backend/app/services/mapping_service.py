@@ -338,17 +338,41 @@ class MappingService:
         self,
         llm_confidence_threshold: float = 0.7,
         top_k: int = 20,
+        supplier_id: int | None = None,
+        only_unmapped: bool = False,
         **_legacy,  # поглощает устаревший threshold= из старых вызовов
     ) -> dict:
+        # Опциональные фильтры: товары конкретного поставщика и/или только те,
+        # у которых ещё нет маппинга (для «классифицировать только загруженное»).
+        where = []
+        params: dict = {}
+        if supplier_id is not None:
+            where.append(
+                "p.id IN (SELECT product_id FROM supplier_products "
+                "WHERE supplier_id = :supplier_id)"
+            )
+            params["supplier_id"] = supplier_id
+        if only_unmapped:
+            where.append(
+                "NOT EXISTS (SELECT 1 FROM product_standard_mapping m "
+                "WHERE m.product_id = p.id)"
+            )
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
         # Берём товары (с properties, если колонка есть)
         try:
             res = await self.db.execute(
-                text("SELECT id, name, description, properties FROM products")
+                text(f"SELECT p.id, p.name, p.description, p.properties "
+                     f"FROM products p{where_sql}"),
+                params,
             )
             products = res.fetchall()
             has_properties = True
         except Exception:
-            res = await self.db.execute(text("SELECT id, name, description FROM products"))
+            res = await self.db.execute(
+                text(f"SELECT p.id, p.name, p.description FROM products p{where_sql}"),
+                params,
+            )
             products = [(r[0], r[1], r[2], {}) for r in res.fetchall()]
             has_properties = False
             logger.warning("Колонка 'properties' отсутствует — LLM без характеристик.")

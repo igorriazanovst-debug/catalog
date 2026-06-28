@@ -9,16 +9,23 @@ router = APIRouter(prefix="/api/mapping", tags=["mapping"])
 async def auto_map_products(
     confidence_threshold: float = 0.7,
     top_k: int = 20,
+    supplier_id: int | None = None,
+    only_unmapped: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Автоматический маппинг всех товаров: гибридный ретрив (вектор ∪ keyword)
+    Автоматический маппинг товаров: гибридный ретрив (вектор ∪ keyword)
     -> LLM-судья. confidence_threshold — порог уверенности LLM для авто-маппинга
     (ниже порога товар помечается на ручную проверку).
+
+    supplier_id — ограничить маппинг товарами одного поставщика
+    (для «классифицировать только что загруженный прайс»).
+    only_unmapped — маппить только товары без существующего маппинга.
     """
     service = MappingService(db)
     result = await service.auto_map_all_products(
-        llm_confidence_threshold=confidence_threshold, top_k=top_k
+        llm_confidence_threshold=confidence_threshold, top_k=top_k,
+        supplier_id=supplier_id, only_unmapped=only_unmapped,
     )
     return result
 

@@ -1,0 +1,7 @@
+node_modules/
+*.local
+.vite/
+
+# dist/ намеренно НЕ игнорируется: боевой сервер раздаёт собранный SPA
+# через FastAPI (backend/app/main.py) и не имеет Node для сборки.
+# Пересобирать: npm ci && npm run build, затем закоммитить dist/.

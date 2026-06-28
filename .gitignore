@@ -11,8 +11,10 @@ __pycache__/
 venv/
 .venv/
 ENV/
-build/
-dist/
+# Анкорим к корню: это артефакты setuptools (setup.py в корне).
+# frontend/dist намеренно НЕ игнорируется — его раздаёт FastAPI на сервере.
+/build/
+/dist/
 *.egg-info/
 
 # IDE
