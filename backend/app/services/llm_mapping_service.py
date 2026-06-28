@@ -6,6 +6,16 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ВАЖНО: качество маппинга измерено на полной модели yandexgpt.
+# Облегчённая yandexgpt-lite НЕ держит правила судьи (precision@pool падает
+# с ~84% до ~58%). Требуется YANDEX_GPT_MODEL_URI вида
+# gpt://<folder>/yandexgpt/latest  (без "-lite").
+if settings.YANDEX_GPT_MODEL_URI and "lite" in settings.YANDEX_GPT_MODEL_URI.lower():
+    logger.warning(
+        "YANDEX_GPT_MODEL_URI указывает на облегчённую модель (lite). "
+        "Качество судьи заметно ниже — используйте полную yandexgpt."
+    )
+
 # Системный промпт для YandexGPT
 SYSTEM_PROMPT = """
 Ты — эксперт по сопоставлению товаров с позициями Приказа Минпросвещения РФ №838.
