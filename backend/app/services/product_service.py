@@ -92,6 +92,8 @@ class ProductService:
         updated = 0
         auto_sku = 0  # сколько товаров получили внутренний артикул
         errors = []
+        to_embed = []  # (product_id, name) новых товаров — эмбеддинги считаем
+                       # одним батчем после цикла (по одному — на порядок медленнее)
 
         # Убедимся, что колонки без лишних пробелов
         df.columns = [col.strip() for col in df.columns]
@@ -174,7 +176,7 @@ class ProductService:
                         }
                     )
                     product_id = result.scalar()
-                    
+
                     await self.db.execute(
                         text("""
                             INSERT INTO supplier_products (supplier_id, product_id, supplier_sku, cost_price, retail_price)
@@ -183,20 +185,31 @@ class ProductService:
                         {"supplier_id": supplier_id, "product_id": product_id, "supplier_sku": supplier_sku, "cost_price": cost_price, "retail_price": retail_price}
                     )
 
-                    embedding = self.embedding_model.encode(name)
-                    emb_str = "[" + ",".join(str(x) for x in embedding.tolist()) + "]"
-                    
-                    await self.db.execute(
-                        text("UPDATE products SET embedding = CAST(:embedding AS vector) WHERE id = :id"),
-                        {"embedding": emb_str, "id": product_id}
-                    )
+                    # Эмбеддинг считаем позже одним батчем (см. ниже). Пока товар
+                    # вставлен с embedding=NULL.
+                    to_embed.append((product_id, name))
                     imported += 1
-                
+
                 await self.db.commit()
-                
+
             except Exception as e:
                 errors.append(f"Строка {idx + 1}: {str(e)}")
                 await self.db.rollback()
+
+        # Батч-эмбеддинг всех новых товаров одним вызовом модели (на порядок
+        # быстрее, чем encode по одному в цикле). Товары уже закоммичены;
+        # если процесс упадёт здесь — эмбеддинги дозальёт
+        # scripts/regenerate_product_embeddings.py.
+        if to_embed:
+            names = [n for _, n in to_embed]
+            vectors = self.embedding_model.encode(names, batch_size=64)
+            for (product_id, _), vec in zip(to_embed, vectors):
+                emb_str = "[" + ",".join(str(x) for x in vec.tolist()) + "]"
+                await self.db.execute(
+                    text("UPDATE products SET embedding = CAST(:embedding AS vector) WHERE id = :id"),
+                    {"embedding": emb_str, "id": product_id}
+                )
+            await self.db.commit()
         
         return {"imported": imported, "updated": updated,
                 "auto_sku": auto_sku, "errors": errors}
