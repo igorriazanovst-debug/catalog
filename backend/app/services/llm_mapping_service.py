@@ -137,6 +137,15 @@ def _parse_decision(raw_text: str) -> dict:
     return json.loads(clean)
 
 
+def _body_snippet(response, limit: int = 200) -> str:
+    """Короткий однострочный фрагмент тела ответа (для диагностики 4xx/5xx)."""
+    try:
+        text = response.text
+    except Exception:
+        return ""
+    return " ".join(text.split())[:limit]
+
+
 async def get_llm_mapping(product_data: dict, candidates: list[dict],
                           provider: str | None = None) -> dict:
     """
@@ -224,9 +233,11 @@ async def _post_with_retry(url, headers, payload, extract, label) -> dict:
                 response = await client.post(url, headers=headers, json=payload)
 
             if response.status_code in RETRIABLE_STATUS:
-                last_reason = f"{label} API Error: {response.status_code}"
-                logger.warning("%s %s (попытка %d/%d)",
-                               label, response.status_code, attempt, MAX_ATTEMPTS)
+                last_reason = (f"{label} API Error: {response.status_code} "
+                               f"{_body_snippet(response)}")
+                logger.warning("%s %s (попытка %d/%d): %s",
+                               label, response.status_code, attempt, MAX_ATTEMPTS,
+                               _body_snippet(response))
                 retry = True
             else:
                 response.raise_for_status()
@@ -234,10 +245,11 @@ async def _post_with_retry(url, headers, payload, extract, label) -> dict:
                 return _parse_decision(raw_text)
 
         except httpx.HTTPStatusError as e:
+            snippet = _body_snippet(e.response)
             logger.error("%s HTTP error: %s - %s", label,
-                         e.response.status_code, e.response.text[:200])
+                         e.response.status_code, snippet)
             return {"standard_id": None, "confidence": 0.0,
-                    "reason": f"{label} API Error: {e.response.status_code}",
+                    "reason": f"{label} API Error: {e.response.status_code}: {snippet}",
                     "error": True}
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_reason = f"{label} network error: {e}"
