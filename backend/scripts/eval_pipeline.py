@@ -96,13 +96,11 @@ async def main(args):
             if in_pool:
                 recall += 1
 
-            llm = await get_llm_mapping(
-                {"name": name, "description": description or "", "properties": properties or {}},
-                [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
-                 for c in pool],
-            )
-            llm_id = llm.get("standard_id")
-            conf = llm.get("confidence", 0.0) or 0.0
+            # Единая точка решения: роутер (правила) -> LLM
+            decision = await service.classify_product(pid, top_k=args.top_k)
+            llm_id = decision["standard_id"]
+            conf = decision["score"]
+            method = decision["method"]
 
             if llm_id is None:
                 null_cnt += 1
@@ -129,6 +127,7 @@ async def main(args):
                 "id_ok": int(ok),
                 "name_ok": int(name_ok),
                 "in_pool": int(in_pool),
+                "method": method,
                 "confidence": f"{conf:.2f}",
             })
 
@@ -160,6 +159,12 @@ async def main(args):
             print(f"Precision@pool (когда эталон в пуле): "
                   f"{present_correct}/{present_total} = {present_correct/present_total:.0%}")
         print(f"LLM сказал null:                  {null_cnt}")
+        # Разбивка по методу решения (роутер vs LLM)
+        for m in ("rule", "llm", "null"):
+            mr = [d for d in dump if d["method"] == m]
+            if mr:
+                ok_m = sum(d["id_ok"] for d in mr)
+                print(f"  метод {m:5}: {len(mr):3} шт, верных {ok_m} ({ok_m/len(mr):.0%})")
         print(f"Выгрузка по строкам:              {dump_path}")
         print("")
         print("Точность по уверенности LLM (где эталон был в пуле):")

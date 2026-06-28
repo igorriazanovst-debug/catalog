@@ -40,6 +40,10 @@ FUNCTION_WORDS = {
     "без", "два", "три", "шт",
 }
 
+# Коды Приказа 838 для детерминированных правил роутера
+CODE_TABLES_GENERIC = "2.17"      # Комплект демонстрационных учебных таблиц (по предметной области)
+CODE_TABLES_PHYSICS = "2.14.137"  # Комплект демонстрационных учебных таблиц (Кабинет физики)
+
 # Процессные синглтоны (ленивая инициализация)
 _embedding_model = None
 _morph = None
@@ -91,19 +95,23 @@ class MappingService:
         res = await self.db.execute(
             text("SELECT id, item_name, full_code FROM industry_standards"))
         lemmas, names, df = {}, {}, {}
-        generics = []  # [(id, item_name)] для 2-уровневых «по предметной области»
+        generics = []   # [(id, item_name)] для 2-уровневых «по предметной области»
+        code2id = {}    # full_code -> id (для детерминированных правил)
         for sid, name, full_code in res.fetchall():
             lem = lemmatize(name)
             lemmas[sid] = lem
             names[sid] = name
             for w in lem:
                 df[w] = df.get(w, 0) + 1
-            if full_code and full_code.count(".") == 1:
-                generics.append((sid, name))
+            if full_code:
+                code2id[full_code] = sid
+                if full_code.count(".") == 1:
+                    generics.append((sid, name))
 
         n_docs = max(len(names), 1)
         idf = {w: math.log(n_docs / (c + 1)) + 1.0 for w, c in df.items()}
-        _std_index = {"lemmas": lemmas, "idf": idf, "names": names, "generics": generics}
+        _std_index = {"lemmas": lemmas, "idf": idf, "names": names,
+                      "generics": generics, "code2id": code2id}
         logger.info("IDF-индекс стандартов построен: %d позиций, %d генериков",
                     len(names), len(generics))
         return _std_index
@@ -240,6 +248,81 @@ class MappingService:
         return candidates
 
     # ------------------------------------------------------------------ #
+    # Детерминированный роутер очевидных случаев (до LLM)
+    # ------------------------------------------------------------------ #
+    def _rule_match(self, name: str, description: str, code2id: dict):
+        """Возвращает (standard_id, reason) для очевидных типов или None.
+
+        Сейчас закрыт самый частый и регулярный класс — демонстрационные таблицы.
+        Правила консервативны: срабатывают только при явном совпадении типа.
+        """
+        t = (name or "").lower()
+
+        # --- Демонстрационные / учебные ТАБЛИЦЫ ---
+        has_tablic = "таблиц" in t
+        is_razdat = "раздат" in t                        # раздаточные/«раздат.» — другой тип
+        is_electronic = any(w in t for w in
+                            ("эор", "электрон", "онлайн", "интерактив", "цифров"))
+        is_storage = any(w in t for w in ("тумба", "шкаф", "стеллаж", "хранен"))
+        looks_demo_tables = (
+            has_tablic and not is_razdat and not is_electronic and not is_storage
+            and ("демонстрацион" in t
+                 or t.strip().startswith(("комплект таблиц", "таблицы ", "таблица ")))
+        )
+        if looks_demo_tables:
+            is_physics = "физик" in t
+            code = CODE_TABLES_PHYSICS if is_physics else CODE_TABLES_GENERIC
+            sid = code2id.get(code)
+            if sid:
+                area = "Кабинет физики" if is_physics else "По предметной области"
+                return sid, f"Правило: демонстрационные таблицы → [{area}] (код {code})"
+        return None
+
+    async def classify_product(self, product_id: int, top_k: int = 20,
+                               llm_confidence_threshold: float = 0.7) -> dict:
+        """Единая точка решения по товару: сначала детерминированный роутер,
+        иначе гибридный ретрив + LLM-судья.
+
+        Возвращает dict: standard_id, score, reason, method ('rule'|'llm'|'null'),
+        is_manual.
+        """
+        res = await self.db.execute(
+            text("SELECT name, description, properties FROM products WHERE id = :id"),
+            {"id": product_id},
+        )
+        row = res.fetchone()
+        if not row:
+            return {"standard_id": None, "score": 0.0, "reason": "товар не найден",
+                    "method": "null", "is_manual": True}
+        name, description, properties = row[0], row[1], (row[2] if len(row) > 2 else {})
+
+        idx = await self._ensure_std_index()
+        rule = self._rule_match(name, description, idx["code2id"])
+        if rule:
+            sid, reason = rule
+            return {"standard_id": sid, "score": 0.99, "reason": reason,
+                    "method": "rule", "is_manual": False}
+
+        # Фоллбэк: LLM-судья по гибридному пулу
+        pool = await self.map_product_to_standards(product_id, top_k=top_k)
+        if not pool:
+            return {"standard_id": None, "score": 0.0, "reason": "нет кандидатов",
+                    "method": "null", "is_manual": True}
+        llm = await get_llm_mapping(
+            {"name": name, "description": description or "", "properties": properties or {}},
+            [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
+             for c in pool],
+        )
+        llm_id = llm.get("standard_id")
+        llm_conf = llm.get("confidence", 0.0) or 0.0
+        if llm_id is None:
+            return {"standard_id": None, "score": llm_conf,
+                    "reason": llm.get("reason", ""), "method": "null", "is_manual": True}
+        return {"standard_id": llm_id, "score": llm_conf,
+                "reason": f"LLM (conf {llm_conf:.2f}): {llm.get('reason', '')}",
+                "method": "llm", "is_manual": llm_conf < llm_confidence_threshold}
+
+    # ------------------------------------------------------------------ #
     # Авто-маппинг всех товаров: гибридный ретрив -> LLM-судья -> решение
     # ------------------------------------------------------------------ #
     async def auto_map_all_products(
@@ -264,47 +347,34 @@ class MappingService:
         auto_mapped = 0
         needs_review = 0
         no_match = 0
+        by_rule = 0
+        by_llm = 0
         errors = []
 
         for row in products:
-            product_id, product_name, product_description = row[0], row[1], row[2]
-            product_properties = row[3] if has_properties else {}
+            product_id, product_name = row[0], row[1]
 
             try:
-                pool = await self.map_product_to_standards(product_id, top_k=top_k)
-                if not pool:
-                    errors.append(f"Товар {product_id} ({product_name}): нет кандидатов")
-                    continue
+                decision = await self.classify_product(
+                    product_id, top_k=top_k,
+                    llm_confidence_threshold=llm_confidence_threshold,
+                )
 
-                product_data = {
-                    "name": product_name,
-                    "description": product_description or "",
-                    "properties": product_properties or {},
-                }
-                llm_candidates = [
-                    {"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
-                    for c in pool
-                ]
-
-                llm = await get_llm_mapping(product_data, llm_candidates)
-                llm_id = llm.get("standard_id")
-                llm_conf = llm.get("confidence", 0.0) or 0.0
-                llm_reason = llm.get("reason", "")
-
-                # LLM не нашёл подходящего — на ручную, маппинг не пишем
-                if llm_id is None:
+                if decision["standard_id"] is None:
                     no_match += 1
                     continue
 
-                is_manual = llm_conf < llm_confidence_threshold
-                final_reason = f"LLM (conf {llm_conf:.2f}): {llm_reason}"
-
                 await self._upsert_mapping(
-                    product_id, llm_id, llm_conf, final_reason, is_manual
+                    product_id, decision["standard_id"], decision["score"],
+                    decision["reason"], decision["is_manual"],
                 )
                 await self.db.commit()
 
-                if is_manual:
+                if decision["method"] == "rule":
+                    by_rule += 1
+                elif decision["method"] == "llm":
+                    by_llm += 1
+                if decision["is_manual"]:
                     needs_review += 1
                 else:
                     auto_mapped += 1
@@ -319,6 +389,8 @@ class MappingService:
             "auto_mapped": auto_mapped,
             "needs_review": needs_review,
             "no_match": no_match,
+            "by_rule": by_rule,
+            "by_llm": by_llm,
             "errors": errors,
         }
 
