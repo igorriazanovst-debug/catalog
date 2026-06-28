@@ -47,10 +47,10 @@ if (_FRONTEND_DIST / "index.html").is_file():
         SPAStaticFiles(directory=str(_FRONTEND_DIST), html=True),
         name="spa",
     )
-    logger.info("SPA смонтирован на /app из %s", _FRONTEND_DIST)
+    # print, а не logger.info — чтобы строка всегда была видна в uvicorn.log
+    # (INFO по умолчанию отфильтрован).
+    print(f"[startup] SPA смонтирован на /app из {_FRONTEND_DIST}", flush=True)
 else:
-    logger.warning(
-        "SPA НЕ смонтирован: нет %s. Соберите фронт (cd frontend && npm ci && "
-        "npm run build) или сделайте git pull, затем перезапустите uvicorn.",
-        _FRONTEND_DIST / "index.html",
-    )
+    print(f"[startup] SPA НЕ смонтирован: нет {_FRONTEND_DIST / 'index.html'}. "
+          f"Соберите фронт (npm ci && npm run build) или git pull и перезапустите.",
+          flush=True)

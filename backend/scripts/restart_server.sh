@@ -59,14 +59,37 @@ source venv/bin/activate
 echo "Старт uvicorn…"
 nohup uvicorn app.main:app --host "$HOST" --port "$PORT" > "$LOG" 2>&1 &
 NEW_PID=$!
-sleep 2
 
-if ! kill -0 "$NEW_PID" 2>/dev/null; then
-  echo "ОШИБКА: uvicorn не стартовал. Хвост лога:"
-  tail -n 30 "$LOG" || true
-  exit 1
-fi
+# Проверка готовности HTTP. Импорт torch/sentence-transformers при старте
+# занимает десятки секунд — всё это время порт ещё не слушается (снаружи 502).
+# Поэтому ждём, пока сервер реально начнёт отвечать (до ~90с).
+http_ok() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS "http://127.0.0.1:$PORT/" >/dev/null 2>&1
+  else
+    python3 - "$PORT" <<'PY' >/dev/null 2>&1
+import sys, urllib.request
+urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/", timeout=3).read()
+PY
+  fi
+}
 
-echo "uvicorn запущен, pid=$NEW_PID"
-grep -i "SPA" "$LOG" || echo "(строка про SPA ещё не появилась — это нормально на старте)"
-echo "Готово. Открывайте http://$HOST:$PORT/app/"
+echo "uvicorn запущен, pid=$NEW_PID. Жду готовности (импорт моделей ~до минуты)…"
+for i in $(seq 1 90); do
+  if http_ok; then
+    echo "Сервер отвечает ✓"
+    grep -i "SPA" "$LOG" || true
+    echo "Готово. Открывайте http://$HOST:$PORT/app/"
+    exit 0
+  fi
+  if ! kill -0 "$NEW_PID" 2>/dev/null; then
+    echo "ОШИБКА: uvicorn упал на старте. Хвост лога:"
+    tail -n 40 "$LOG" || true
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "ОШИБКА: сервер не ответил за 90с. Процесс ещё жив, но не слушает. Хвост лога:"
+tail -n 40 "$LOG" || true
+exit 1
