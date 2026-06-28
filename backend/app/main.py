@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -6,6 +7,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse, Response
 
 from app.api.endpoints import products, mapping, review
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="School Equipment Catalog")
 
@@ -37,9 +40,16 @@ class SPAStaticFiles(StaticFiles):
 # существует — иначе backend поднимается и без фронта (до первого `npm run
 # build`). parents[2] = корень репозитория.
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-if _FRONTEND_DIST.is_dir():
+if (_FRONTEND_DIST / "index.html").is_file():
     app.mount(
         "/app",
         SPAStaticFiles(directory=str(_FRONTEND_DIST), html=True),
         name="spa",
+    )
+    logger.info("SPA смонтирован на /app из %s", _FRONTEND_DIST)
+else:
+    logger.warning(
+        "SPA НЕ смонтирован: нет %s. Соберите фронт (cd frontend && npm ci && "
+        "npm run build) или сделайте git pull, затем перезапустите uvicorn.",
+        _FRONTEND_DIST / "index.html",
     )
