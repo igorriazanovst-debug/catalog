@@ -1,5 +1,24 @@
 import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+# Понятная ошибка вместо длинного трейсбека, если .env сохранён не в UTF-8
+# (типично: русский комментарий в Windows-1251). pydantic читает .env как UTF-8
+# и иначе падает с невнятным UnicodeDecodeError на старте всего сервера.
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+if _ENV_PATH.exists():
+    try:
+        _ENV_PATH.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise RuntimeError(
+            f"Файл {_ENV_PATH} не в кодировке UTF-8 (невалидный байт в позиции "
+            f"{e.start}). Пересохраните .env как UTF-8 или уберите не-ASCII символы "
+            f"из комментариев. Быстрая чистка: "
+            f"python3 -c \"p='{_ENV_PATH}'; b=open(p,'rb').read(); "
+            f"open(p+'.bak','wb').write(b); "
+            f"open(p,'w',encoding='utf-8').write(b.decode('utf-8','ignore'))\""
+        ) from None
 
 class Settings(BaseSettings):
     # База данных
