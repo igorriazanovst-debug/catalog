@@ -17,6 +17,11 @@ if settings.YANDEX_GPT_MODEL_URI and "lite" in settings.YANDEX_GPT_MODEL_URI.low
         "Качество судьи заметно ниже — используйте полную yandexgpt."
     )
 
+# Видимая отметка в логе, что LLM-запросы пойдут через прокси (host без кред).
+if settings.LLM_PROXY:
+    _safe = settings.LLM_PROXY.split("@")[-1]
+    print(f"[startup] LLM-запросы через прокси: {_safe}", flush=True)
+
 # Системный промпт для YandexGPT
 SYSTEM_PROMPT = """
 Ты — эксперт по сопоставлению товаров с позициями Приказа Минпросвещения РФ №838.
@@ -137,6 +142,18 @@ def _parse_decision(raw_text: str) -> dict:
     return json.loads(clean)
 
 
+def _make_client() -> httpx.AsyncClient:
+    """httpx-клиент с опциональным прокси (settings.LLM_PROXY) — только для
+    LLM-запросов. Совместимо с новым (proxy=) и старым (proxies=) httpx."""
+    proxy = settings.LLM_PROXY
+    if not proxy:
+        return httpx.AsyncClient(timeout=30.0)
+    try:
+        return httpx.AsyncClient(timeout=30.0, proxy=proxy)
+    except TypeError:
+        return httpx.AsyncClient(timeout=30.0, proxies=proxy)
+
+
 def _body_snippet(response, limit: int = 200) -> str:
     """Короткий однострочный фрагмент тела ответа (для диагностики 4xx/5xx)."""
     try:
@@ -229,7 +246,7 @@ async def _post_with_retry(url, headers, payload, extract, label) -> dict:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         retry = False
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with _make_client() as client:
                 response = await client.post(url, headers=headers, json=payload)
 
             if response.status_code in RETRIABLE_STATUS:

@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Провайдер LLM-судьи по умолчанию: "yandex" | "groq".
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "yandex")
 
+    # Прокси ТОЛЬКО для исходящих запросов к LLM (Groq геоблокирует РФ → 403).
+    # Применяется лишь к вызовам провайдеров, не к остальному трафику. Формат:
+    # http://user:pass@host:port или socks5://host:port (для socks нужен
+    # пакет httpx[socks]). Пусто — без прокси.
+    LLM_PROXY: str = os.getenv("LLM_PROXY", "")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

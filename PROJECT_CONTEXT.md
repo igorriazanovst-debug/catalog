@@ -150,6 +150,13 @@ message, error, result) и рисует прогресс-бар. Реестр з
 `GROQ_API_KEY=…` (+ опц. `GROQ_MODEL=…`), `LLM_PROVIDER=yandex|groq` — провайдер
 по умолчанию. После добавления ключа — перезапустить сервер.
 
+**Geo-блок Groq из РФ:** с российского IP Groq отдаёт `403 {"error":{"message":
+"Forbidden"}}` на любой запрос. Решение — прокси ТОЛЬКО для LLM-запросов:
+`LLM_PROXY=http://user:pass@host:port` (или `socks5://…`, нужен `httpx[socks]`) в
+`backend/.env`. Применяется лишь к вызовам провайдеров (Yandex и загрузка моделей —
+напрямую). Если задан — в `uvicorn.log` при старте строка `[startup] LLM-запросы
+через прокси: …`. `.env` — строго UTF-8 (иначе сервер не стартует, см. config.py).
+
 Миграция боевой БД (одноразово, снимает старый глобальный UNIQUE с `products.sku`):
 `python scripts/migrate_drop_sku_unique.py --db-url "$DBURL"`.
 Поставщика, импортированного старой логикой, пересобрать:
