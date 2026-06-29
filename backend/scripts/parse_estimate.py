@@ -71,11 +71,16 @@ def main() -> None:
     ap.add_argument("--json", help="сохранить результат(ы) в JSON-файл")
     args = ap.parse_args()
 
+    _SPREADSHEET_EXT = {".xlsx", ".xlsm", ".xltx", ".xltm"}
     results = []
     for f in args.files:
         path = Path(f)
         if not path.exists():
             print(f"Файл не найден: {path}", file=sys.stderr)
+            continue
+        if path.suffix.lower() not in _SPREADSHEET_EXT:
+            hint = " (для сохранения JSON используйте флаг --json)" if path.suffix.lower() == ".json" else ""
+            print(f"Пропущен (не xlsx): {path}{hint}", file=sys.stderr)
             continue
         res = parse_estimate(path)
         results.append(res)
