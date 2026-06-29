@@ -85,8 +85,18 @@ def lemmatize(s: str) -> set:
 class MappingService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.embedding_model = get_embedding_model()
-        self.morph = get_morph()
+
+    # Модель эмбеддингов и морфоанализатор — ленивые (грузятся ~минуту). Конструктор
+    # держим дешёвым: часть потребителей (подбор предложений по стандарту, кандидаты
+    # сметы) ретрив не делают и модель грузить не должны. Тяжёлую загрузку прогревают
+    # в фоне через asyncio.to_thread(get_embedding_model).
+    @property
+    def embedding_model(self) -> SentenceTransformer:
+        return get_embedding_model()
+
+    @property
+    def morph(self) -> "pymorphy2.MorphAnalyzer":
+        return get_morph()
 
     # ------------------------------------------------------------------ #
     # Индекс стандартов для keyword-ретрива (кэшируется на процесс)

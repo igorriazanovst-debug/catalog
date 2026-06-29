@@ -260,6 +260,7 @@ export interface EstimateListItem {
 export interface EstimateItem {
   id: number;
   source_name: string | null;
+  source_description: string | null;
   group_name: string | null;
   unit: string | null;
   match_method: string | null;
@@ -273,6 +274,7 @@ export interface EstimateItem {
   product_id: number | null;
   product_name: string | null;
   sku: string | null;
+  product_description: string | null;
   supplier_id: number | null;
   supplier_name: string | null;
 }
@@ -302,26 +304,22 @@ export interface EstimateOffer {
   is_manual: boolean;
 }
 
-export interface EstimateUploadOptions {
-  name?: string;
-  use_llm?: boolean;
-  provider?: string;
-  decompose?: boolean;
-  price_basis?: "cost" | "retail";
+// Загрузка = разбор и сохранение распознанных строк (без подбора).
+export interface EstimateUploaded {
+  estimate_id: number;
+  name: string;
+  positions: number;
+  warnings: string[];
 }
 
 export function uploadEstimate(
   file: File,
-  opts: EstimateUploadOptions,
+  name?: string,
   onProgress?: (pct: number) => void
-): Promise<{ job_id: string; name: string; positions: number }> {
+): Promise<EstimateUploaded> {
   const form = new FormData();
   form.append("file", file);
-  if (opts.name) form.append("name", opts.name);
-  form.append("use_llm", String(opts.use_llm ?? true));
-  if (opts.provider) form.append("provider", opts.provider);
-  form.append("decompose", String(opts.decompose ?? true));
-  form.append("price_basis", opts.price_basis ?? "cost");
+  if (name) form.append("name", name);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/estimates/upload");
@@ -346,6 +344,46 @@ export function uploadEstimate(
     xhr.onerror = () => reject(new Error("Сетевая ошибка при загрузке"));
     xhr.send(form);
   });
+}
+
+export interface ClassifyOptions {
+  use_llm?: boolean;
+  provider?: string;
+  decompose?: boolean;
+  price_basis?: "cost" | "retail";
+}
+
+// Авто-классификация всей сметы (фон) → job_id.
+export async function classifyEstimate(
+  estimateId: number,
+  opts: ClassifyOptions
+): Promise<{ job_id: string }> {
+  const form = new FormData();
+  form.append("use_llm", String(opts.use_llm ?? true));
+  if (opts.provider) form.append("provider", opts.provider);
+  form.append("decompose", String(opts.decompose ?? true));
+  form.append("price_basis", opts.price_basis ?? "cost");
+  const r = await fetch(`/api/estimates/${estimateId}/classify`, {
+    method: "POST",
+    body: form,
+  });
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.json();
+}
+
+// Классификация одной строки (ручной режим): без LLM или с LLM.
+export async function classifyItem(
+  estimateId: number,
+  itemId: number,
+  useLlm: boolean,
+  provider?: string
+): Promise<unknown> {
+  const q = new URLSearchParams();
+  q.set("use_llm", String(useLlm));
+  if (provider) q.set("provider", provider);
+  return jpost(
+    `/api/estimates/${estimateId}/items/${itemId}/classify?${q}`
+  );
 }
 
 export const listEstimates = () =>

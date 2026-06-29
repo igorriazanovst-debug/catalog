@@ -208,13 +208,20 @@ async-сессией БД.
 - `api/endpoints/review.py` — ручная проверка: `/api/review` (HTML), `/stats`,
   `/queue`, `/product/{id}/candidates`, `/mapping/{id}/approve|reassign|reject`.
 - `api/endpoints/jobs.py` — `GET /api/jobs/{id}`.
-- `api/endpoints/estimates.py` — **API входящих смет**: `POST /api/estimates/upload`
-  (xlsx, фон: разбор+подбор+запись, отдаёт job_id; параметры use_llm/provider/
-  decompose/price_basis), `GET /api/estimates`, `GET /api/estimates/{id}` (позиции
-  с товаром/поставщиком/ценой), `GET /api/estimates/{id}/items/{item_id}/candidates`
-  (варианты товаров по стандарту строки), `POST .../choose?product_id=&supplier_id=`
-  (ручной выбор + пересчёт итога), `GET /api/estimates/{id}/export` (xlsx),
-  `DELETE /api/estimates/{id}`. Запись/подбор — через `EstimateMatcher.save_estimate`.
+- `api/endpoints/estimates.py` — **API входящих смет**. Поток: РАЗБОР отдельно от
+  ПОДБОРА. `POST /api/estimates/upload` (xlsx) — только разбирает и сохраняет
+  распознанные строки (+ исходный файл в base64), быстро, без LLM, отдаёт
+  estimate_id. Подбор — отдельно: `POST /api/estimates/{id}/classify` (ФОН, авто по
+  всем строкам; use_llm/provider/decompose/price_basis) и
+  `POST /api/estimates/{id}/items/{item_id}/classify?use_llm=&provider=` (одна
+  строка, ручной режим без/с LLM, синхронно). Просмотр: `GET /api/estimates`,
+  `GET /api/estimates/{id}` (исходные имя/описание + наши колонки: артикул,
+  наименование, описание товара, цена, итог). `.../items/{id}/candidates` +
+  `.../choose` — ручной выбор товара. `GET /api/estimates/{id}/export` —
+  **аннотированный экспорт: в ОРИГИНАЛЬНЫЙ файл дописываются наши колонки**
+  (Артикул/Наименование/Описание/Цена/Итого) + лист «Подбор» с детализацией и НДС.
+  `DELETE /api/estimates/{id}`. Сервис: `create_estimate_from_parsed`,
+  `classify_estimate`, `classify_item` в `EstimateMatcher`.
 
 ### Frontend (`frontend/`, React 18 + Vite + TS, раздаётся под `/app`)
 - `src/api.ts` — типы + клиент: upload/listSuppliers/listProducts/autoMap/
@@ -259,6 +266,10 @@ async-сессией БД.
 - `migrate_estimate_items_columns.py --db-url ...` — **добавить в estimate_items**
   колонки `source_name/group_name/unit/match_method/match_reason` (для записи смет).
   Идемпотентно. **ЗАПУСТИТЬ на боевой БД перед использованием загрузки смет.**
+- `migrate_estimates_source.py --db-url ...` — **исходный файл сметы** в БД
+  (`estimates.source_filename/source_file_b64/sheet_name/header_row`) +
+  `estimate_items.source_description/source_row`. Для аннот. экспорта и показа
+  исходного описания. Идемпотентно. **ЗАПУСТИТЬ перед новой версией смет.**
 - `import_products.py`, `run_automap.py`, `eval_pipeline.py`, `parse_order_838.py`,
   `import_standards.py`, `generate_embeddings.py`, `regenerate_product_embeddings.py`,
   `export_standards.py`, `diagnose_mapping.py`, `simulate_strategies.py`,
@@ -409,12 +420,26 @@ curl -s -F file=@../data/input/smeta-2.xlsx -F provider=aitunnel \
 # вернёт {job_id}; статус: curl /api/jobs/<id>; смета: curl /api/estimates/<estimate_id>
 ```
 
-### СДЕЛАНО: UI-раздел смет (фронтенд)
-SPA-страницы `/estimates` (список), `/estimates/upload` (загрузка + подбор с
-прогрессом), `/estimates/:id` (детальная смета с правкой/экспортом). Навигация
-«Сметы» в шапке. Собранный `frontend/dist` закоммичен. На сервере: после
-`git pull` — `bash backend/scripts/restart_server.sh` (SPA раздаётся при старте).
-Открыть: `http://31.192.110.121:8001/app/` → «Сметы».
+### СДЕЛАНО: UI-раздел смет + раздельный разбор/классификация
+Поток: загрузка xlsx → **разбор** (распознанные строки сразу видны) → подбор по
+кнопкам. На `/estimates/:id`: панель классификации (метод: без LLM / с LLM-
+провайдером, цена, разложение наборов) + «**Авто-классификация** (все строки)»
+(фон, прогресс); на каждой строке — «**без LLM**», «**с LLM**» (ручная построчная)
+и «Товар…» (ручной выбор товара). Таблица показывает исходные **наименование** и
+**описание (по смете)** рядом с нашими колонками **Артикул/Наименование/Описание/
+Цена за ед/Итог**. **Экспорт** дописывает наши колонки в оригинальный файл + лист
+«Подбор». Собранный `frontend/dist` закоммичен.
+
+**Сервер (после git pull):** прогнать обе миграции, затем рестарт:
+```bash
+DBURL="$(grep -E '^database_url=' .env | cut -d= -f2- | tr -d '\"' | sed 's#^postgresql://#postgresql+asyncpg://#')"
+python scripts/migrate_estimate_items_columns.py --db-url "$DBURL"
+python scripts/migrate_estimates_source.py --db-url "$DBURL"
+bash scripts/restart_server.sh
+```
+Открыть: `http://31.192.110.121:8001/app/` → «Сметы». (Смета id=1 от curl-теста
+осталась в старом формате без исходного файла — для чистоты можно удалить и
+загрузить заново.)
 
 ### ПОТОМ
 - Фильтр поставщиков (пока подбор из ВСЕХ; UI-загрузка это уже предусматривает в

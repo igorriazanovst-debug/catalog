@@ -31,12 +31,15 @@ LLM-судья опционален (`use_llm`, переключаемый пр�
 
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import re
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.estimate_parser import parse_estimate
 from app.services.mapping_service import MappingService, lemmatize
 from app.services.llm_mapping_service import get_llm_mapping, get_llm_decomposition
 
@@ -356,6 +359,8 @@ class EstimateMatcher:
                 "quantity": line_qty * it.get("quantity_per_set", 1.0),
                 "unit": "шт",
                 "characteristics": [],
+                # вложение наследует строку исходного файла родителя (для экспорта)
+                "source_rows": line.get("source_rows"),
             }
             subs.append(await self._match_single(sub_line, use_llm=True,
                                                  provider=provider))
@@ -369,6 +374,8 @@ class EstimateMatcher:
                 "position": line.get("position"), "name": line.get("name"),
                 "code_ktru": line.get("code_ktru"), "code_okpd2": line.get("code_okpd2"),
                 "quantity": line_qty, "unit": line.get("unit"),
+                "source_rows": line.get("source_rows"),
+                "source_description": _chars_text(line.get("characteristics")),
             },
             "match_method": "bundle",
             "match_reason": f"набор разложен на {len(subs)} вложений (LLM)",
@@ -413,6 +420,9 @@ class EstimateMatcher:
                 "code_okpd2": line.get("code_okpd2"),
                 "quantity": qty,
                 "unit": line.get("unit"),
+                "source_rows": line.get("source_rows"),
+                "source_description": line.get("source_description")
+                or _chars_text(line.get("characteristics")),
             },
             "match_method": resolved["method"],
             "match_reason": resolved.get("reason", ""),
@@ -493,55 +503,179 @@ class EstimateMatcher:
             else:
                 yield r, None
 
+    @staticmethod
+    def _src_row(line: dict):
+        rows = line.get("source_rows") or []
+        return rows[0] if rows else None
+
+    async def _insert_item(self, estimate_id: int, leaf: dict, group_name):
+        """Вставить одну позицию (лист) сметы."""
+        line = leaf["line"]
+        std = leaf.get("standard")
+        offer = leaf.get("chosen_offer")
+        await self.db.execute(
+            text("""
+                INSERT INTO estimate_items
+                  (estimate_id, standard_id, product_id, supplier_id,
+                   source_name, source_description, source_row, group_name, unit,
+                   match_method, match_reason, quantity, unit_price, total_price)
+                VALUES
+                  (:eid, :sid, :pid, :supid, :sname, :sdesc, :srow, :gname, :unit,
+                   :method, :reason, :qty, :uprice, :tprice)
+            """),
+            {
+                "eid": estimate_id,
+                "sid": std["standard_id"] if std else None,
+                "pid": offer["product_id"] if offer else None,
+                "supid": offer["supplier_id"] if offer else None,
+                "sname": line.get("name"),
+                "sdesc": line.get("source_description"),
+                "srow": self._src_row(line),
+                "gname": group_name,
+                "unit": line.get("unit"),
+                "method": leaf.get("match_method"),
+                "reason": leaf.get("match_reason"),
+                "qty": line.get("quantity") or 1.0,
+                "uprice": leaf.get("unit_price") or 0.0,
+                "tprice": leaf.get("total_price") or 0.0,
+            },
+        )
+
     async def save_estimate(self, name: str, match_result: dict,
                             description: str | None = None) -> dict:
-        """Записать смету и её позиции. Вложения набора сохраняются как отдельные
-        estimate_items (group_name = имя набора). Несопоставленные позиции тоже
-        сохраняются (с product/supplier = NULL, ценой 0) — чтобы не терять
-        потребность; их можно дозаполнить вручную (choose)."""
+        """Создать смету и записать её позиции (вложения набора — отдельно)."""
         leaves = list(self._leaves(match_result))
-        total_amount = sum(
-            (leaf.get("total_price") or 0.0) for leaf, _ in leaves)
-
+        total_amount = sum((leaf.get("total_price") or 0.0) for leaf, _ in leaves)
         res = await self.db.execute(
             text("""INSERT INTO estimates (name, description, total_amount)
                     VALUES (:name, :descr, :total) RETURNING id"""),
             {"name": name, "descr": description, "total": total_amount},
         )
         estimate_id = res.scalar()
-
         for leaf, group_name in leaves:
-            line = leaf["line"]
-            std = leaf.get("standard")
-            offer = leaf.get("chosen_offer")
-            await self.db.execute(
-                text("""
-                    INSERT INTO estimate_items
-                      (estimate_id, standard_id, product_id, supplier_id,
-                       source_name, group_name, unit, match_method, match_reason,
-                       quantity, unit_price, total_price)
-                    VALUES
-                      (:eid, :sid, :pid, :supid, :sname, :gname, :unit, :method,
-                       :reason, :qty, :uprice, :tprice)
-                """),
-                {
-                    "eid": estimate_id,
-                    "sid": std["standard_id"] if std else None,
-                    "pid": offer["product_id"] if offer else None,
-                    "supid": offer["supplier_id"] if offer else None,
-                    "sname": line.get("name"),
-                    "gname": group_name,
-                    "unit": line.get("unit"),
-                    "method": leaf.get("match_method"),
-                    "reason": leaf.get("match_reason"),
-                    "qty": line.get("quantity") or 1.0,
-                    "uprice": leaf.get("unit_price") or 0.0,
-                    "tprice": leaf.get("total_price") or 0.0,
-                },
-            )
+            await self._insert_item(estimate_id, leaf, group_name)
         await self.db.commit()
         return {"estimate_id": estimate_id, "items": len(leaves),
                 "total_amount": round(total_amount, 2)}
+
+    # ------------------------------------------------------------------ #
+    # Разбор-и-запись (без подбора) + классификация уже сохранённой сметы
+    # ------------------------------------------------------------------ #
+    async def create_estimate_from_parsed(self, name: str, parsed: dict,
+                                          source_filename: str | None,
+                                          source_file_b64: str | None) -> dict:
+        """Сохранить распознанные строки сметы БЕЗ подбора (для предпросмотра и
+        последующей классификации). Хранит исходный файл для аннот. экспорта."""
+        res = await self.db.execute(
+            text("""INSERT INTO estimates
+                      (name, total_amount, source_filename, source_file_b64,
+                       sheet_name, header_row)
+                    VALUES (:name, 0, :fn, :b64, :sheet, :hrow) RETURNING id"""),
+            {"name": name, "fn": source_filename, "b64": source_file_b64,
+             "sheet": parsed.get("sheet"), "hrow": parsed.get("header_row")},
+        )
+        estimate_id = res.scalar()
+        for it in parsed.get("items", []):
+            rows = it.get("source_rows") or []
+            await self.db.execute(
+                text("""
+                    INSERT INTO estimate_items
+                      (estimate_id, source_name, source_description, source_row,
+                       unit, quantity, unit_price, total_price)
+                    VALUES (:eid, :sname, :sdesc, :srow, :unit, :qty, 0, 0)
+                """),
+                {"eid": estimate_id, "sname": it.get("name"),
+                 "sdesc": _chars_text(it.get("characteristics")),
+                 "srow": rows[0] if rows else None,
+                 "unit": it.get("unit"),
+                 "qty": _to_float(it.get("quantity"), 1.0)},
+            )
+        await self.db.commit()
+        return {"estimate_id": estimate_id, "items": len(parsed.get("items", []))}
+
+    async def _load_parsed(self, estimate_id: int) -> tuple[dict, str]:
+        row = await self.db.execute(
+            text("SELECT name, source_file_b64, source_filename "
+                 "FROM estimates WHERE id = :id"), {"id": estimate_id})
+        r = row.fetchone()
+        if not r or not r[1]:
+            raise ValueError("у сметы нет сохранённого исходного файла")
+        content = base64.b64decode(r[1])
+        parsed = parse_estimate(io.BytesIO(content), display_name=r[2] or r[0])
+        return parsed, r[0]
+
+    async def classify_estimate(self, estimate_id: int, use_llm: bool,
+                                provider: str | None, decompose: bool,
+                                progress=None) -> dict:
+        """Авто-классификация всей сметы: пере-разобрать исходный файл, подобрать,
+        ПЕРЕЗАПИСАТЬ позиции."""
+        parsed, _ = await self._load_parsed(estimate_id)
+        result = await self.match_estimate(parsed, use_llm=use_llm,
+                                            provider=provider, decompose=decompose,
+                                            progress=progress)
+        await self._replace_items(estimate_id, result)
+        return result["summary"]
+
+    async def _replace_items(self, estimate_id: int, match_result: dict):
+        await self.db.execute(
+            text("DELETE FROM estimate_items WHERE estimate_id = :id"),
+            {"id": estimate_id})
+        total = 0.0
+        for leaf, group_name in self._leaves(match_result):
+            await self._insert_item(estimate_id, leaf, group_name)
+            total += leaf.get("total_price") or 0.0
+        await self.db.execute(
+            text("UPDATE estimates SET total_amount = :t WHERE id = :id"),
+            {"t": round(total, 2), "id": estimate_id})
+        await self.db.commit()
+
+    async def classify_item(self, estimate_id: int, item_id: int,
+                            use_llm: bool, provider: str | None) -> dict:
+        """Классифицировать ОДНУ строку (ручной режим, без/с LLM). Декомпозиция
+        здесь не применяется — это одна строка. Возвращает подбор для ответа."""
+        row = await self.db.execute(
+            text("""SELECT source_name, source_description, quantity, unit, source_row
+                    FROM estimate_items WHERE id = :iid AND estimate_id = :eid"""),
+            {"iid": item_id, "eid": estimate_id})
+        r = row.fetchone()
+        if not r:
+            raise ValueError("позиция не найдена")
+        chars = [{"name": r[1], "value": ""}] if r[1] else []
+        line = {
+            "name": r[0], "characteristics": chars,
+            "quantity": float(r[2]) if r[2] is not None else 1.0,
+            "unit": r[3], "code_ktru": None, "code_okpd2": None,
+            "source_rows": [r[4]] if r[4] else None,
+            "source_description": r[1],
+        }
+        res = await self._match_single(line, use_llm=use_llm, provider=provider)
+        std = res.get("standard")
+        offer = res.get("chosen_offer")
+        await self.db.execute(
+            text("""UPDATE estimate_items
+                    SET standard_id = :sid, product_id = :pid, supplier_id = :supid,
+                        group_name = NULL, match_method = :method,
+                        match_reason = :reason, unit_price = :uprice,
+                        total_price = :tprice
+                    WHERE id = :iid"""),
+            {"sid": std["standard_id"] if std else None,
+             "pid": offer["product_id"] if offer else None,
+             "supid": offer["supplier_id"] if offer else None,
+             "method": res.get("match_method"),
+             "reason": res.get("match_reason"),
+             "uprice": res.get("unit_price") or 0.0,
+             "tprice": res.get("total_price") or 0.0,
+             "iid": item_id})
+        await self._recompute_total(estimate_id)
+        await self.db.commit()
+        return res
+
+    async def _recompute_total(self, estimate_id: int):
+        await self.db.execute(
+            text("""UPDATE estimates SET total_amount =
+                      (SELECT COALESCE(SUM(total_price),0) FROM estimate_items
+                       WHERE estimate_id = :id)
+                    WHERE id = :id"""), {"id": estimate_id})
 
     async def offers_for_standard(self, standard_id: int) -> list[dict]:
         """Предложения (товар+цена) под один стандарт — для ручного выбора в UI."""
@@ -555,3 +689,23 @@ def _to_float(v, default: float = 0.0) -> float:
     # оставляем только число (кол-во может прийти как «5 набор»)
     m = re.search(r"\d+(?:\.\d+)?", s)
     return float(m.group(0)) if m else default
+
+
+def _chars_text(characteristics) -> str:
+    """Характеристики строки сметы → читаемое «описание по смете» (для показа и
+    хранения). Каждая характеристика: «Имя: значение ед.»."""
+    if not characteristics:
+        return ""
+    parts = []
+    for c in characteristics:
+        name = (c.get("name") or "").strip()
+        val = (c.get("value") or "").strip()
+        unit = (c.get("unit") or "").strip()
+        line = name
+        if val:
+            line = f"{name}: {val}" if name else val
+        if unit:
+            line = f"{line} {unit}"
+        if line:
+            parts.append(line)
+    return "; ".join(parts)

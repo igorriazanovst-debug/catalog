@@ -86,11 +86,17 @@ CREATE TABLE system_settings (
 );
 
 -- Таблица смет
+-- source_* — исходный загруженный файл сметы (для аннотированного экспорта:
+--   в оригинальный файл дописываем наши колонки и заполняем подбором).
 CREATE TABLE estimates (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
     total_amount NUMERIC(15,2),
+    source_filename TEXT,
+    source_file_b64 TEXT,
+    sheet_name TEXT,
+    header_row INTEGER,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -106,6 +112,8 @@ CREATE TABLE estimate_items (
     product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
     supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
     source_name TEXT,
+    source_description TEXT,
+    source_row INTEGER,
     group_name TEXT,
     unit VARCHAR(50),
     match_method VARCHAR(20),
