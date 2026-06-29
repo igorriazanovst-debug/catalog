@@ -1,4 +1,4 @@
-"""Сопоставление позиций входящей сметы с каталогом — БЕЗ LLM (этап правил).
+"""Сопоставление позиций входящей сметы с каталогом.
 
 Вход — позиции из `estimate_parser` (наименование, код КТРУ/ОКПД2, кол-во,
 характеристики). Для каждой позиции:
@@ -6,9 +6,12 @@
   ШАГ 1. Позиция → стандарт Приказа 838 (`industry_standards`):
      а) ПО КОДУ (приоритетно): КТРУ → `industry_standards.ktru_code`, иначе
         ОКПД2 → `industry_standards.okpd2_code`;
-     б) если по коду не нашли — ТЕКСТОВЫЙ фоллбэк: гибридный ретрив
-        (вектор ∪ keyword) по наименованию+характеристикам, как для товаров
-        (переиспользуем `MappingService`). Лучший кандидат = выбранный стандарт.
+     б) если по коду не нашли — ТЕКСТОВЫЙ ретрив (вектор ∪ keyword) по
+        НАИМЕНОВАНИЮ позиции (переиспользуем `MappingService`) → пул кандидатов;
+     в) детерминированный роутер (демо-таблицы, без LLM) на пуле;
+     г) LLM-СУДЬЯ (опционально, `use_llm`) выбирает из пула один стандарт —
+        характеристики позиции здесь помогают уточнить тип (в отличие от ретрива,
+        где они уводят). Без LLM берём топ ретрива.
   ШАГ 2. Стандарт → товары → цена: товары, привязанные к стандарту через
      `product_standard_mapping` (NOT rejected), их предложения поставщиков
      (`supplier_products`). Критерий выбора (по решению пользователя): СНАЧАЛА
@@ -16,9 +19,10 @@
      match_score), ПОТОМ цена — самое дешёвое по cost_price (себестоимость).
      Остальные предложения — как альтернативы.
 
-LLM здесь НЕ используется. Выбор поставщика — пока из ВСЕХ (фильтра нет).
-Сервис read-only: ничего не пишет в БД (валидация качества подбора на реальных
-данных; запись в `estimates`/`estimate_items` — следующий этап).
+LLM-судья опционален (`use_llm`, переключаемый провайдер). Выбор поставщика —
+пока из ВСЕХ (фильтра нет). Сервис read-only: ничего не пишет в БД (валидация
+качества подбора на реальных данных; запись в `estimates`/`estimate_items` —
+следующий этап).
 
 ВАЖНО про коды: в текущей БД `industry_standards.ktru_code/okpd2_code` могут быть
 не заполнены (импорт 838 их не проставлял) — тогда код-матч ничего не находит и
@@ -34,6 +38,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.mapping_service import MappingService, lemmatize
+from app.services.llm_mapping_service import get_llm_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +146,24 @@ class EstimateMatcher:
             len(c["sources"]),
             c["vector_similarity"] if c["vector_similarity"] is not None else -1.0,
         ), reverse=True)
+
+        # Обогащаем метаданными иерархии и меткой для LLM-судьи ("[область] имя"),
+        # как в MappingService.map_product_to_standards.
+        ids = [c["standard_id"] for c in cands]
+        if ids:
+            meta_res = await self.db.execute(
+                text("SELECT id, full_code, subsection_name FROM industry_standards "
+                     "WHERE id = ANY(:ids)"),
+                {"ids": ids},
+            )
+            meta = {r[0]: (r[1], r[2]) for r in meta_res.fetchall()}
+            for c in cands:
+                full_code, subsection_name = meta.get(c["standard_id"], (None, None))
+                is_generic = bool(full_code) and full_code.count(".") == 1
+                area = "По предметной области" if is_generic else (subsection_name or "")
+                c["full_code"] = full_code
+                c["subsection_name"] = subsection_name
+                c["llm_label"] = f"[{area}] {c['standard_name']}" if area else c["standard_name"]
         return cands
 
     @staticmethod
@@ -157,19 +180,64 @@ class EstimateMatcher:
         extra = " ".join((ch.get("name") or "") for ch in line.get("characteristics", []))
         return (name + " " + extra).strip()[:512]
 
-    async def _resolve_standard(self, line: dict) -> dict:
-        """Вернуть {method, standards:[...], candidates:[...]} для позиции.
-        method: 'ktru' | 'okpd2' | 'text' | 'none'."""
+    async def _resolve_standard(self, line: dict, use_llm: bool = False,
+                                provider: str | None = None) -> dict:
+        """Вернуть {method, standards:[...], candidates:[...], reason} для позиции.
+        method: 'ktru' | 'okpd2' | 'rule' | 'text+llm' | 'text' | 'none'.
+
+        Порядок: код (КТРУ→ОКПД2) → текстовый пул → детерминированный роутер
+        (демо-таблицы, без LLM) → LLM-судья выбирает из пула (если use_llm),
+        иначе берём топ ретрива."""
         by_ktru = await self._by_ktru(line.get("code_ktru"))
         if by_ktru:
-            return {"method": "ktru", "standards": by_ktru, "candidates": by_ktru}
+            return {"method": "ktru", "standards": by_ktru, "candidates": by_ktru,
+                    "reason": "точное совпадение КТРУ"}
         by_okpd2 = await self._by_okpd2(line.get("code_okpd2"))
         if by_okpd2:
-            return {"method": "okpd2", "standards": by_okpd2, "candidates": by_okpd2}
+            return {"method": "okpd2", "standards": by_okpd2, "candidates": by_okpd2,
+                    "reason": "совпадение ОКПД2"}
+
         cands = await self._by_text(self._line_query(line))
-        if cands:
-            return {"method": "text", "standards": cands[:1], "candidates": cands[:5]}
-        return {"method": "none", "standards": [], "candidates": []}
+        if not cands:
+            return {"method": "none", "standards": [], "candidates": [], "reason": ""}
+
+        # Детерминированный роутер (демо-таблицы и т.п.) — дёшево, без LLM.
+        idx = await self.mapping._ensure_std_index()
+        rule = self.mapping._rule_match(line.get("name", ""), "", idx["code2id"])
+        if rule:
+            sid, reason = rule
+            std = {"standard_id": sid, "standard_name": idx["names"].get(sid, ""),
+                   "full_code": None}
+            return {"method": "rule", "standards": [std], "candidates": cands[:5],
+                    "reason": reason}
+
+        if not use_llm:
+            return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
+                    "reason": "топ текстового ретрива (без LLM)"}
+
+        # LLM-судья выбирает из пула один стандарт (или null). Характеристики
+        # позиции здесь ПОМОГАЮТ уточнить тип (в отличие от ретрива).
+        properties = {ch.get("name"): ch.get("value")
+                      for ch in line.get("characteristics", []) if ch.get("name")}
+        llm = await get_llm_mapping(
+            {"name": line.get("name", ""), "description": "", "properties": properties},
+            [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
+             for c in cands],
+            provider=provider,
+        )
+        if not llm.get("error"):
+            picked = next((c for c in cands if c["standard_id"] == llm.get("standard_id")), None)
+            if picked:
+                conf = llm.get("confidence", 0.0) or 0.0
+                return {"method": "text+llm", "standards": [picked],
+                        "candidates": cands[:5],
+                        "reason": f"LLM (conf {conf:.2f}): {llm.get('reason', '')}"}
+            # LLM сказал «нет подходящего типа» (null) — берём топ ретрива с пометкой.
+            return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
+                    "reason": f"LLM не выбрал тип ({llm.get('reason', '')}); взят топ ретрива"}
+        # Сбой LLM — graceful fallback на топ ретрива.
+        return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
+                "reason": f"сбой LLM ({llm.get('reason', '')}); взят топ ретрива"}
 
     # ------------------------------------------------------------------ #
     # ШАГ 2: стандарт -> товары -> самое дешёвое предложение
@@ -217,8 +285,9 @@ class EstimateMatcher:
     # ------------------------------------------------------------------ #
     # Полный подбор по одной позиции
     # ------------------------------------------------------------------ #
-    async def match_line(self, line: dict) -> dict:
-        resolved = await self._resolve_standard(line)
+    async def match_line(self, line: dict, use_llm: bool = False,
+                         provider: str | None = None) -> dict:
+        resolved = await self._resolve_standard(line, use_llm=use_llm, provider=provider)
         standards = resolved["standards"]
         std_ids = [s["standard_id"] for s in standards]
 
@@ -248,6 +317,7 @@ class EstimateMatcher:
                 "unit": line.get("unit"),
             },
             "match_method": resolved["method"],
+            "match_reason": resolved.get("reason", ""),
             "standard": standards[0] if standards else None,
             "standard_candidates": resolved["candidates"],
             "chosen_offer": chosen,
@@ -257,10 +327,12 @@ class EstimateMatcher:
             "warnings": warnings,
         }
 
-    async def match_estimate(self, parsed: dict) -> dict:
+    async def match_estimate(self, parsed: dict, use_llm: bool = False,
+                             provider: str | None = None) -> dict:
         """Подобрать товары под все позиции разобранной сметы + посчитать итоги."""
         items = parsed.get("items", [])
-        results = [await self.match_line(it) for it in items]
+        results = [await self.match_line(it, use_llm=use_llm, provider=provider)
+                   for it in items]
 
         subtotal = sum(r["total_price"] for r in results if r["total_price"])
         vat = await self.vat_rate()
@@ -268,7 +340,8 @@ class EstimateMatcher:
 
         matched = sum(1 for r in results if r["chosen_offer"])
         by_code = sum(1 for r in results if r["match_method"] in ("ktru", "okpd2"))
-        by_text = sum(1 for r in results if r["match_method"] == "text")
+        by_llm = sum(1 for r in results if r["match_method"] == "text+llm")
+        by_text = sum(1 for r in results if r["match_method"] in ("text", "rule"))
         unmatched = sum(1 for r in results if r["match_method"] == "none")
 
         return {
@@ -278,6 +351,7 @@ class EstimateMatcher:
                 "positions": len(results),
                 "matched_with_offer": matched,
                 "resolved_by_code": by_code,
+                "resolved_by_llm": by_llm,
                 "resolved_by_text": by_text,
                 "unresolved": unmatched,
                 "subtotal": round(subtotal, 2),

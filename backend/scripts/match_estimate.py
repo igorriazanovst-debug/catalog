@@ -54,6 +54,8 @@ def _print_result(res: dict) -> None:
                   f"{std.get('full_code') or ''} {std.get('standard_name')}")
         else:
             print(f"     → 838 [{method}]: НЕ сопоставлено")
+        if r.get("match_reason"):
+            print(f"       причина: {r['match_reason']}")
         offer = r["chosen_offer"]
         if offer:
             ms = offer.get("match_score")
@@ -90,8 +92,8 @@ def _print_result(res: dict) -> None:
     print("=" * 100)
     print("ИТОГ:")
     print(f"  позиций: {s['positions']} | с подбором: {s['matched_with_offer']} "
-          f"| по коду: {s['resolved_by_code']} | по тексту: {s['resolved_by_text']} "
-          f"| не сопоставлено: {s['unresolved']}")
+          f"| по коду: {s['resolved_by_code']} | по LLM: {s.get('resolved_by_llm', 0)} "
+          f"| по тексту: {s['resolved_by_text']} | не сопоставлено: {s['unresolved']}")
     print(f"  сумма ({s['price_basis']}): {_money(s['subtotal'])}  "
           f"НДС {s['vat_rate']*100:.0f}%: {_money(s['vat_amount'])}  "
           f"ИТОГО с НДС: {_money(s['total_with_vat'])}")
@@ -124,12 +126,16 @@ async def main(args):
         async with Session() as db:
             matcher = EstimateMatcher(db, price_basis=args.price, top_k=args.top_k)
             _print_availability(await matcher.db_code_availability())
+            if args.llm:
+                print(f"LLM-судья: ВКЛ (провайдер: {args.llm})")
             for path in paths:
                 if not path.exists():
                     print(f"Файл не найден: {path}", file=sys.stderr)
                     continue
                 parsed = parse_estimate(path)
-                result = await matcher.match_estimate(parsed)
+                provider = None if args.llm == "default" else args.llm
+                result = await matcher.match_estimate(
+                    parsed, use_llm=bool(args.llm), provider=provider)
                 result_file = str(path)
                 print()
                 print(f"ФАЙЛ: {result_file}")
@@ -139,12 +145,16 @@ async def main(args):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Подбор товаров под смету (без LLM)")
+    p = argparse.ArgumentParser(description="Подбор товаров под смету (текст, опц. LLM-судья)")
     p.add_argument("files", nargs="+", help="xlsx-файлы смет")
     p.add_argument("--db-url", default=DEFAULT_DB_URL)
     p.add_argument("--price", choices=["retail", "cost"], default="cost",
                    help="по какой цене выбирать «дешевле» и считать итог (по умолч. cost/себестоимость)")
     p.add_argument("--top-k", type=int, default=20, help="размер пула текстового ретрива")
+    p.add_argument("--llm", nargs="?", const="default", default=None,
+                   choices=["default", "yandex", "groq", "aitunnel"],
+                   help="включить LLM-судью для текстового матча (опц. провайдер; "
+                        "по умолчанию из .env LLM_PROVIDER)")
     return p.parse_args()
 
 
