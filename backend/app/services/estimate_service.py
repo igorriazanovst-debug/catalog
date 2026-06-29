@@ -38,7 +38,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.mapping_service import MappingService, lemmatize
-from app.services.llm_mapping_service import get_llm_mapping
+from app.services.llm_mapping_service import get_llm_mapping, get_llm_decomposition
 
 logger = logging.getLogger(__name__)
 
@@ -311,10 +311,66 @@ class EstimateMatcher:
         return offers
 
     # ------------------------------------------------------------------ #
-    # Полный подбор по одной позиции
+    # Подбор по одной позиции (с опц. разложением набора на вложения)
     # ------------------------------------------------------------------ #
     async def match_line(self, line: dict, use_llm: bool = False,
-                         provider: str | None = None) -> dict:
+                         provider: str | None = None,
+                         decompose: bool = False) -> dict:
+        """Подбор под одну строку сметы. Если decompose и use_llm — сначала
+        LLM-декомпозиция: цельный товар матчим как есть, набор разложим на
+        вложения и подберём каждое (1 строка → N позиций), цену суммируем."""
+        if decompose and use_llm and line.get("characteristics"):
+            decomp = await get_llm_decomposition(
+                {"name": line.get("name", ""),
+                 "characteristics": line.get("characteristics", [])},
+                provider=provider,
+            )
+            if not decomp.get("error") and decomp.get("is_bundle"):
+                return await self._match_bundle(line, decomp["items"], provider)
+        return await self._match_single(line, use_llm=use_llm, provider=provider)
+
+    async def _match_bundle(self, line: dict, items: list[dict],
+                            provider: str | None) -> dict:
+        """Набор: подобрать каждое вложение отдельно, суммировать."""
+        line_qty = _to_float(line.get("quantity"), default=1.0)
+        subs = []
+        for it in items:
+            sub_line = {
+                "position": None,
+                "name": it["name"],
+                "code_ktru": None, "code_okpd2": None,
+                "quantity": line_qty * it.get("quantity_per_set", 1.0),
+                "unit": "шт",
+                "characteristics": [],
+            }
+            subs.append(await self._match_single(sub_line, use_llm=True,
+                                                 provider=provider))
+        total = sum(s["total_price"] for s in subs if s["total_price"])
+        warnings = []
+        missing = [s for s in subs if not s["chosen_offer"]]
+        if missing:
+            warnings.append(f"Без подбора {len(missing)} из {len(subs)} вложений.")
+        return {
+            "line": {
+                "position": line.get("position"), "name": line.get("name"),
+                "code_ktru": line.get("code_ktru"), "code_okpd2": line.get("code_okpd2"),
+                "quantity": line_qty, "unit": line.get("unit"),
+            },
+            "match_method": "bundle",
+            "match_reason": f"набор разложен на {len(subs)} вложений (LLM)",
+            "is_bundle": True,
+            "sub_items": subs,
+            "standard": None,
+            "standard_candidates": [],
+            "chosen_offer": None,
+            "alternatives": [],
+            "unit_price": None,
+            "total_price": total if total else None,
+            "warnings": warnings,
+        }
+
+    async def _match_single(self, line: dict, use_llm: bool = False,
+                            provider: str | None = None) -> dict:
         resolved = await self._resolve_standard(line, use_llm=use_llm, provider=provider)
         standards = resolved["standards"]
         std_ids = [s["standard_id"] for s in standards]
@@ -346,6 +402,7 @@ class EstimateMatcher:
             },
             "match_method": resolved["method"],
             "match_reason": resolved.get("reason", ""),
+            "is_bundle": False,
             "standard": standards[0] if standards else None,
             "standard_candidates": resolved["candidates"],
             "chosen_offer": chosen,
@@ -356,27 +413,39 @@ class EstimateMatcher:
         }
 
     async def match_estimate(self, parsed: dict, use_llm: bool = False,
-                             provider: str | None = None) -> dict:
+                             provider: str | None = None,
+                             decompose: bool = False) -> dict:
         """Подобрать товары под все позиции разобранной сметы + посчитать итоги."""
         items = parsed.get("items", [])
-        results = [await self.match_line(it, use_llm=use_llm, provider=provider)
+        results = [await self.match_line(it, use_llm=use_llm, provider=provider,
+                                         decompose=decompose)
                    for it in items]
 
         subtotal = sum(r["total_price"] for r in results if r["total_price"])
         vat = await self.vat_rate()
         vat_amount = round(subtotal * vat, 2)
 
-        matched = sum(1 for r in results if r["chosen_offer"])
-        by_code = sum(1 for r in results if r["match_method"] in ("ktru", "okpd2"))
-        by_llm = sum(1 for r in results if r["match_method"] == "text+llm")
-        by_text = sum(1 for r in results if r["match_method"] in ("text", "rule"))
-        unmatched = sum(1 for r in results if r["match_method"] == "none")
+        # Счётчики считаем по «листьям»: вложения набора — каждое отдельно.
+        leaves = []
+        for r in results:
+            if r.get("is_bundle"):
+                leaves.extend(r["sub_items"])
+            else:
+                leaves.append(r)
+        matched = sum(1 for r in leaves if r["chosen_offer"])
+        by_code = sum(1 for r in leaves if r["match_method"] in ("ktru", "okpd2"))
+        by_llm = sum(1 for r in leaves if r["match_method"] == "text+llm")
+        by_text = sum(1 for r in leaves if r["match_method"] in ("text", "rule"))
+        unmatched = sum(1 for r in leaves if r["match_method"] == "none")
+        bundles = sum(1 for r in results if r.get("is_bundle"))
 
         return {
             "sheet": parsed.get("sheet"),
             "items": results,
             "summary": {
                 "positions": len(results),
+                "bundles": bundles,
+                "subitems_total": len(leaves),
                 "matched_with_offer": matched,
                 "resolved_by_code": by_code,
                 "resolved_by_llm": by_llm,

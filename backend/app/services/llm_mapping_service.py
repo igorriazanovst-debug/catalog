@@ -174,16 +174,23 @@ async def get_llm_mapping(product_data: dict, candidates: list[dict],
 
     provider: "yandex" | "groq". По умолчанию settings.LLM_PROVIDER.
     """
-    provider = (provider or settings.LLM_PROVIDER or "yandex").lower()
     user_prompt = _build_user_prompt(product_data, candidates)
+    return await _dispatch(SYSTEM_PROMPT, user_prompt, provider)
+
+
+async def _dispatch(system_prompt: str, user_prompt: str,
+                    provider: str | None = None) -> dict:
+    """Выбор провайдера и вызов с заданным системным промптом. Возвращает
+    распарсенный JSON-ответ модели (или {error:True} при сбое)."""
+    provider = (provider or settings.LLM_PROVIDER or "yandex").lower()
     if provider == "groq":
-        return await _call_groq(user_prompt)
+        return await _call_groq(system_prompt, user_prompt)
     if provider == "aitunnel":
-        return await _call_aitunnel(user_prompt)
-    return await _call_yandex(user_prompt)
+        return await _call_aitunnel(system_prompt, user_prompt)
+    return await _call_yandex(system_prompt, user_prompt)
 
 
-async def _call_yandex(user_prompt: str) -> dict:
+async def _call_yandex(system_prompt: str, user_prompt: str) -> dict:
     if not settings.YANDEX_GPT_API_KEY or not settings.YANDEX_GPT_FOLDER_ID:
         logger.warning("YandexGPT не настроен (нет ключа/folder).")
         return {"standard_id": None, "confidence": 0.0,
@@ -193,7 +200,7 @@ async def _call_yandex(user_prompt: str) -> dict:
         "modelUri": settings.YANDEX_GPT_MODEL_URI,
         "completionOptions": {"stream": False, "temperature": 0.1, "maxTokens": 1000},
         "messages": [
-            {"role": "system", "text": SYSTEM_PROMPT},
+            {"role": "system", "text": system_prompt},
             {"role": "user", "text": user_prompt},
         ],
     }
@@ -213,7 +220,7 @@ async def _call_yandex(user_prompt: str) -> dict:
     return await _post_with_retry(url, headers, payload, extract, "YandexGPT")
 
 
-async def _call_groq(user_prompt: str) -> dict:
+async def _call_groq(system_prompt: str, user_prompt: str) -> dict:
     if not settings.GROQ_API_KEY:
         logger.warning("Groq не настроен (нет GROQ_API_KEY).")
         return {"standard_id": None, "confidence": 0.0,
@@ -221,11 +228,12 @@ async def _call_groq(user_prompt: str) -> dict:
     return await _call_openai_compatible(
         base_url="https://api.groq.com/openai/v1",
         api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL,
-        user_prompt=user_prompt, label="Groq", json_mode=True,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        label="Groq", json_mode=True,
     )
 
 
-async def _call_aitunnel(user_prompt: str) -> dict:
+async def _call_aitunnel(system_prompt: str, user_prompt: str) -> dict:
     if not settings.AITUNNEL_API_KEY:
         logger.warning("AITunnel не настроен (нет AITUNNEL_API_KEY).")
         return {"standard_id": None, "confidence": 0.0,
@@ -236,12 +244,13 @@ async def _call_aitunnel(user_prompt: str) -> dict:
     return await _call_openai_compatible(
         base_url=settings.AITUNNEL_BASE_URL,
         api_key=settings.AITUNNEL_API_KEY, model=settings.AITUNNEL_MODEL,
-        user_prompt=user_prompt, label="AITunnel", json_mode=False,
+        system_prompt=system_prompt, user_prompt=user_prompt,
+        label="AITunnel", json_mode=False,
     )
 
 
 async def _call_openai_compatible(*, base_url: str, api_key: str, model: str,
-                                  user_prompt: str, label: str,
+                                  system_prompt: str, user_prompt: str, label: str,
                                   json_mode: bool) -> dict:
     """Общий вызов OpenAI-совместимого chat/completions (Groq, AITunnel и т.п.)."""
     payload = {
@@ -249,7 +258,7 @@ async def _call_openai_compatible(*, base_url: str, api_key: str, model: str,
         "temperature": 0.1,
         "max_tokens": 1000,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
@@ -319,3 +328,83 @@ async def _post_with_retry(url, headers, payload, extract, label) -> dict:
 
     # Все попытки исчерпаны — это сбой провайдера (а не «нет подходящего стандарта»).
     return {"standard_id": None, "confidence": 0.0, "reason": last_reason, "error": True}
+
+
+# --------------------------------------------------------------------------- #
+# Декомпозиция строки сметы на отдельно закупаемые позиции (вложения)
+# --------------------------------------------------------------------------- #
+DECOMPOSITION_SYSTEM_PROMPT = """
+Ты — эксперт по закупкам учебного оборудования (44-ФЗ). Тебе дают ОДНУ строку
+сметы: наименование и её характеристики. Реши, это ОДИН товар или НАБОР из
+нескольких самостоятельно закупаемых позиций, и верни список позиций для подбора.
+
+КАК РАЗЛИЧАТЬ:
+- ОДИН ТОВАР (is_bundle=false): характеристики — это ЧАСТИ/КОМПЛЕКТУЮЩИЕ/параметры
+  одного изделия (например у прибора: соленоид, катушки, провода, датчик, корпус,
+  напряжение, материал, габариты). По отдельности школа их не закупает — это
+  детали одного устройства. Тогда верни ровно одну позицию = само наименование
+  строки.
+- НАБОР (is_bundle=true): характеристики — это САМОСТОЯТЕЛЬНЫЕ изделия, каждое из
+  которых школа могла бы купить отдельно (например: «Комплект портретов…»,
+  «Комплект репродукций…», «Комплект демонстрационных таблиц…», «Прибор для
+  опытов…», «Коллекция…», «Модель…»). Тогда верни СПИСОК таких вложений — по
+  одному пункту на каждое самостоятельное изделие. Параметры-уточнения
+  (предметная область, «наличие», «соответствие», размеры) в список НЕ выноси.
+
+ПРАВИЛА:
+1. Имя вложения бери из характеристики как есть, но коротко и пригодно для поиска
+   (без «не менее…», без длинных условий).
+2. Не выдумывай вложения, которых нет в характеристиках.
+3. Если сомневаешься — выбирай ОДИН товар (is_bundle=false).
+4. quantity_per_set — сколько таких изделий в одном наборе (по характеристике;
+   по умолчанию 1).
+
+ФОРМАТ ОТВЕТА — строгий JSON без markdown:
+{
+  "is_bundle": <true|false>,
+  "items": [
+    {"name": "<наименование позиции для подбора>", "quantity_per_set": <число>}
+  ]
+}
+"""
+
+
+def _build_decomp_prompt(line_data: dict) -> str:
+    chars = line_data.get("characteristics", [])
+    chars_text = "\n".join(
+        f"- {c.get('name', '')}: {c.get('value', '')} {c.get('unit', '')}".rstrip()
+        for c in chars
+    ) or "(нет характеристик)"
+    return f"""
+СТРОКА СМЕТЫ:
+Наименование: {line_data.get('name', 'Не указано')}
+
+ХАРАКТЕРИСТИКИ:
+{chars_text}
+
+Определи, один это товар или набор, и верни позиции для подбора.
+"""
+
+
+async def get_llm_decomposition(line_data: dict,
+                                provider: str | None = None) -> dict:
+    """Разложить строку сметы на отдельно закупаемые позиции.
+    Возвращает {is_bundle, items:[{name, quantity_per_set}]} либо {error:True}."""
+    user_prompt = _build_decomp_prompt(line_data)
+    res = await _dispatch(DECOMPOSITION_SYSTEM_PROMPT, user_prompt, provider)
+    if res.get("error"):
+        return res
+    # Нормализуем форму ответа.
+    items = res.get("items") or []
+    norm = []
+    for it in items:
+        name = (it.get("name") or "").strip() if isinstance(it, dict) else str(it).strip()
+        if not name:
+            continue
+        qps = it.get("quantity_per_set", 1) if isinstance(it, dict) else 1
+        try:
+            qps = float(qps)
+        except (TypeError, ValueError):
+            qps = 1.0
+        norm.append({"name": name, "quantity_per_set": qps})
+    return {"is_bundle": bool(res.get("is_bundle")) and len(norm) > 1, "items": norm}

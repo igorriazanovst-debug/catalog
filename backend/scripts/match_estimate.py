@@ -38,6 +38,49 @@ def _money(x) -> str:
     return "—" if x is None else f"{x:,.2f}".replace(",", " ")
 
 
+def _print_match(r: dict, indent: str = "     ") -> None:
+    """Печать одного подбора (строка сметы или вложение набора)."""
+    line = r["line"]
+    std = r["standard"]
+    method = r["match_method"]
+    if std:
+        print(f"{indent}→ 838 [{method}]: #{std['standard_id']} "
+              f"{std.get('full_code') or ''} {std.get('standard_name')}")
+    else:
+        print(f"{indent}→ 838 [{method}]: НЕ сопоставлено")
+    if r.get("match_reason"):
+        print(f"{indent}  причина: {r['match_reason']}")
+    offer = r["chosen_offer"]
+    if offer:
+        ms = offer.get("match_score")
+        ms_s = "—" if ms is None else f"{ms:.2f}"
+        kind = "ручной" if offer.get("is_manual") else "авто"
+        print(f"{indent}✓ товар: {offer['product_name']} "
+              f"(арт. {offer.get('sku')}, {offer.get('manufacturer') or '—'}) "
+              f"[маппинг: {kind}, score={ms_s}]")
+        print(f"{indent}  поставщик: {offer['supplier_name']} | "
+              f"РРЦ={_money(offer.get('retail_price'))} "
+              f"себест.={_money(offer.get('cost_price'))}")
+        print(f"{indent}  цена×кол-во = {_money(r['unit_price'])} × {line['quantity']} "
+              f"= {_money(r['total_price'])}")
+        if r["alternatives"]:
+            print(f"{indent}  другие предложения ({len(r['alternatives'])}):")
+            for a in r["alternatives"][:3]:
+                a_ms = a.get("match_score")
+                a_ms_s = "—" if a_ms is None else f"{a_ms:.2f}"
+                print(f"{indent}     · {_money(a.get('retail_price'))} — "
+                      f"{a['product_name'][:55]} ({a['supplier_name']}, score={a_ms_s})")
+    if method in ("text", "text+llm", "rule") and r["standard_candidates"]:
+        print(f"{indent}  кандидаты 838 (ретрив):")
+        for c in r["standard_candidates"][:3]:
+            vs = c.get("vector_similarity")
+            vs_s = "—" if vs is None else f"{vs:.3f}"
+            print(f"{indent}     · #{c['standard_id']} {c['standard_name'][:70]} "
+                  f"[{'+'.join(c.get('sources', []))} vec={vs_s}]")
+    for w in r["warnings"]:
+        print(f"{indent}  ! {w}")
+
+
 def _print_result(res: dict) -> None:
     print("=" * 100)
     print(f"СМЕТА (лист: {res.get('sheet')}) — позиций: {len(res['items'])}")
@@ -47,51 +90,22 @@ def _print_result(res: dict) -> None:
         print(f"  № {line.get('position') or '?'}: {line.get('name') or '(без имени)'}")
         print(f"     код: КТРУ={line.get('code_ktru')} ОКПД2={line.get('code_okpd2')} "
               f"| кол-во: {line.get('quantity')} {line.get('unit') or ''}")
-        std = r["standard"]
-        method = r["match_method"]
-        if std:
-            print(f"     → 838 [{method}]: #{std['standard_id']} "
-                  f"{std.get('full_code') or ''} {std.get('standard_name')}")
+        if r.get("is_bundle"):
+            print(f"     НАБОР → {r['match_reason']}; итог набора: {_money(r['total_price'])}")
+            for i, sub in enumerate(r["sub_items"], 1):
+                print(f"     ─ вложение {i}: {sub['line'].get('name')}")
+                _print_match(sub, indent="        ")
         else:
-            print(f"     → 838 [{method}]: НЕ сопоставлено")
-        if r.get("match_reason"):
-            print(f"       причина: {r['match_reason']}")
-        offer = r["chosen_offer"]
-        if offer:
-            ms = offer.get("match_score")
-            ms_s = "—" if ms is None else f"{ms:.2f}"
-            kind = "ручной" if offer.get("is_manual") else "авто"
-            print(f"     ✓ товар: {offer['product_name']} "
-                  f"(арт. {offer.get('sku')}, {offer.get('manufacturer') or '—'}) "
-                  f"[маппинг: {kind}, score={ms_s}]")
-            print(f"       поставщик: {offer['supplier_name']} | "
-                  f"РРЦ={_money(offer.get('retail_price'))} "
-                  f"себест.={_money(offer.get('cost_price'))} | "
-                  f"срок={offer.get('delivery_days')} остаток={offer.get('stock_quantity')}")
-            print(f"       цена×кол-во = {_money(r['unit_price'])} × {line['quantity']} "
-                  f"= {_money(r['total_price'])}")
-            if r["alternatives"]:
-                print(f"       другие предложения ({len(r['alternatives'])}):")
-                for a in r["alternatives"][:3]:
-                    a_ms = a.get("match_score")
-                    a_ms_s = "—" if a_ms is None else f"{a_ms:.2f}"
-                    print(f"          · {_money(a.get('retail_price'))} — "
-                          f"{a['product_name'][:55]} ({a['supplier_name']}, score={a_ms_s})")
-        # Для текстового матча/LLM покажем топ кандидатов 838 — проверить качество.
-        if method in ("text", "text+llm", "rule") and r["standard_candidates"]:
-            print("       кандидаты 838 (ретрив):")
-            for c in r["standard_candidates"][:3]:
-                vs = c.get("vector_similarity")
-                vs_s = "—" if vs is None else f"{vs:.3f}"
-                print(f"          · #{c['standard_id']} {c['standard_name'][:70]} "
-                      f"[{'+'.join(c.get('sources', []))} vec={vs_s}]")
-        for w in r["warnings"]:
-            print(f"       ! {w}")
+            _print_match(r)
 
     s = res["summary"]
     print("=" * 100)
     print("ИТОГ:")
-    print(f"  позиций: {s['positions']} | с подбором: {s['matched_with_offer']} "
+    extra = ""
+    if s.get("bundles"):
+        extra = (f" | наборов: {s['bundles']} "
+                 f"(вложений всего: {s['subitems_total']})")
+    print(f"  позиций: {s['positions']}{extra} | с подбором: {s['matched_with_offer']} "
           f"| по коду: {s['resolved_by_code']} | по LLM: {s.get('resolved_by_llm', 0)} "
           f"| по тексту: {s['resolved_by_text']} | не сопоставлено: {s['unresolved']}")
     print(f"  сумма ({s['price_basis']}): {_money(s['subtotal'])}  "
@@ -135,7 +149,8 @@ async def main(args):
                 parsed = parse_estimate(path)
                 provider = None if args.llm == "default" else args.llm
                 result = await matcher.match_estimate(
-                    parsed, use_llm=bool(args.llm), provider=provider)
+                    parsed, use_llm=bool(args.llm), provider=provider,
+                    decompose=args.decompose)
                 result_file = str(path)
                 print()
                 print(f"ФАЙЛ: {result_file}")
@@ -155,6 +170,9 @@ def parse_args():
                    choices=["default", "yandex", "groq", "aitunnel"],
                    help="включить LLM-судью для текстового матча (опц. провайдер; "
                         "по умолчанию из .env LLM_PROVIDER)")
+    p.add_argument("--decompose", action="store_true",
+                   help="раскладывать строки-наборы на вложения через LLM "
+                        "(требует --llm)")
     return p.parse_args()
 
 
