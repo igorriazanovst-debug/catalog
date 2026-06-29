@@ -1,215 +1,320 @@
 # HANDOFF — резюме для следующей сессии
 
-Документ максимально подробный: чтобы новая сессия стартовала без вопросов.
-Дата: 2026-06-28.
+Дата: 2026-06-29. Документ самодостаточный: следующая сессия должна стартовать
+без разведки и лишних вопросов.
+
+**Цель следующей сессии: ВХОДЯЩИЕ СМЕТЫ** (см. раздел 9 — там и постановка, и
+открытые вопросы, которые надо задать пользователю в начале).
 
 ---
 
 ## 0. КАК МЫ РАБОТАЕМ (важно!)
 
 Среда ассистента — **эфемерный контейнер**, отдельный от боевого сервера.
-Прямого доступа к серверу/БД у ассистента НЕТ. Поэтому цикл такой:
+Прямого доступа к серверу/БД у ассистента НЕТ. Цикл:
 
-1. Ассистент пишет/правит код локально → **коммитит** → **пушит** в ветку
-   `claude/charming-maxwell-11bdtk` (origin = GitHub `igorriazanovst-debug/catalog`).
-2. Пользователь на сервере делает `git pull`, **запускает** скрипт/команду,
-   результат (лог/CSV) при необходимости **коммитит и пушит** обратно.
-3. Ассистент делает `git fetch` + `git reset --hard origin/...`, **читает** лог,
-   делает выводы, правит код. И так по кругу.
+1. Ассистент пишет/правит код → **коммитит** → **пушит** в ветку
+   `claude/handoff-review-7z5w0i` (origin = GitHub `igorriazanovst-debug/catalog`).
+2. Пользователь на сервере `git pull`, перезапускает сервер, гоняет скрипты,
+   присылает вывод/логи в чат.
+3. Ассистент читает вывод, правит код. И так по кругу.
 
-Подробности git:
-- Рабочая ветка: **`claude/charming-maxwell-11bdtk`** (НЕ main).
-- Коммиты автор: `Claude <noreply@anthropic.com>` (хук это проверяет).
-- Пуш из контейнера: обычный `git push -u origin claude/charming-maxwell-11bdtk`.
-  В начале сессии пуш не работал (403), пока пользователь не выдал
-  GitHub-интеграции право **Contents: Read and write** — теперь работает.
-- На сервере git пушит по HTTPS с **personal access token** в remote URL
-  (fine-grained, repo catalog, Contents RW). Если на сервере снова 403 —
-  проверить срок токена.
-- На сервере у некоторых файлов бывают **локальные правки** (хардкод порта).
-  Если `git pull` ругается — `git checkout -- <file>` (наши версии берут
-  `--db-url`, локальные хаки не нужны) и снова pull.
+Git:
+- Рабочая ветка: **`claude/handoff-review-7z5w0i`** (НЕ main). Эта ветка уже
+  включает всю прошлую работу (была fast-forward с `claude/charming-maxwell-11bdtk`)
+  плюс весь фронтенд/джобы/провайдеры этой сессии.
+- Автор коммитов: `Claude <noreply@anthropic.com>` (требуется; в контейнере
+  коммитим через `git -c user.name="Claude" -c user.email="noreply@anthropic.com"`).
+- Пуш: `git push -u origin claude/handoff-review-7z5w0i`.
+- **Фронт коммитим вместе со сборкой `frontend/dist`** (на сервере нет Node —
+  он раздаёт уже собранный SPA). После любой правки фронта: `cd frontend &&
+  npm run build`, затем коммит вместе с `dist`.
 
-Универсальный сниппет для всех серверных команд (достаёт строку БД из `.env`,
-чинит схему на asyncpg):
+---
+
+## 1. ЧТО ЗА ПРОЕКТ
+
+SaaS-каталог школьного оборудования. Поставщик грузит прайс (CSV) → система
+авто-сопоставляет товары с позициями **Приказа Минпросвещения РФ №838** →
+помогает формировать **сметы** для школ. Репозиторий: backend (FastAPI) +
+frontend (React SPA).
+
+---
+
+## 2. БОЕВОЙ СЕРВЕР (точные факты)
+
+- Путь: **`/opt/catalog`**, backend `/opt/catalog/backend`, venv там же, Python **3.10**, Ubuntu.
+- **PostgreSQL 16 + pgvector в Docker на порту 5433** (НЕ 5432). Креды в
+  `/opt/catalog/backend/.env` (`database_url=postgresql://...@localhost:5433/catalog_db`).
+- **`.env` строго в UTF-8** и **без русских комментариев** — иначе сервер не
+  стартует (pydantic читает .env как UTF-8). Теперь падает с понятным сообщением
+  (`config.py` проверяет заранее). Если поломали кодировку — чистка:
+  `python3 -c "p='/opt/catalog/backend/.env'; b=open(p,'rb').read(); open(p+'.bak','wb').write(b); open(p,'w',encoding='utf-8').write(b.decode('utf-8','ignore'))"`.
+- **API-сервер:** uvicorn на `0.0.0.0:8001`, запускается скриптом
+  **`bash backend/scripts/restart_server.sh`** (гасит старый процесс, ждёт
+  освобождения порта, ждёт реального ответа HTTP до 90с, печатает хвост лога при
+  сбое). Лог: `/opt/catalog/uvicorn.log`. **Код/статика подхватываются только при
+  старте — после `git pull` ОБЯЗАТЕЛЬНО перезапуск.**
+- Перед сервером есть **обратный прокси (nginx)** — при упавшем uvicorn снаружи
+  отдаёт **502**. Снаружи: `http://31.192.110.121:8001`.
+- **UI:** SPA на **`http://31.192.110.121:8001/app/`**; служебная страница ручной
+  проверки (старая, самодостаточный HTML) — **`/api/review`**.
+- Данные на сервере (НЕ в git): прайсы поставщиков в `/opt/catalog/data/input/...`,
+  справочник 838 — `838.xlsx`.
+
+Универсальный сниппет для серверных скриптов (строка БД из .env, схема под asyncpg):
 ```bash
-cd /opt/catalog && git pull origin claude/charming-maxwell-11bdtk && \
-cd backend && source venv/bin/activate && \
+cd /opt/catalog/backend && source venv/bin/activate
 DBURL="$(grep -E '^database_url=' .env | cut -d= -f2- | tr -d '\"' | sed 's#^postgresql://#postgresql+asyncpg://#')"
 # далее: python scripts/<script>.py --db-url "$DBURL"
 ```
 
 ---
 
-## 1. ЧТО ЗА ПРОЕКТ
+## 3. СОСТОЯНИЕ БД (на конец сессии)
 
-SaaS-каталог: поставщик грузит товары (CSV прайс-лист) → система автоматически
-сопоставляет (маппит) их с позициями **Приказа Минпросвещения РФ №838** →
-помогает формировать сметы для школ. Репозиторий: только **backend** (FastAPI),
-фронтенда пока почти нет (есть одна служебная HTML-страница ручной проверки).
-
----
-
-## 2. БОЕВОЙ СЕРВЕР (важные факты)
-
-- Путь проекта: **`/opt/catalog`**, backend в `/opt/catalog/backend`, venv там же.
-- Python **3.10**, Ubuntu. `pymorphy2` + `pymorphy2-dicts-ru` установлены.
-- **PostgreSQL 16 + pgvector в Docker на порту 5433** (НЕ 5432!). Креды в
-  `/opt/catalog/backend/.env` (`database_url=postgresql://...@localhost:5433/catalog_db`).
-- **YandexGPT:** ключи в `.env` (`YANDEX_GPT_API_KEY`, `YANDEX_GPT_FOLDER_ID`,
-  `YANDEX_GPT_MODEL_URI`). **ОБЯЗАТЕЛЬНО полная модель** `gpt://<folder>/yandexgpt/latest`
-  (НЕ `yandexgpt-lite` — на lite точность судьи падает с ~84% до ~58%).
-- **Нет systemd-сервиса** `catalog-api` (в старом резюме упоминался, но не создан).
-- **nginx** на сервере обслуживает ЧУЖОЙ проект (editor-web → :3002), к нам не относится.
-- **Фаервол (ufw) активен.** Открыты порты: 80, 8080, 3001, OpenSSH и теперь **8001**.
-- Данные на сервере (НЕ в git): `/opt/catalog/data/input/838.xlsx`,
-  `/opt/catalog/data/input/шаблон товары.csv`, `/opt/catalog/data/input/app.1000psc.csv`.
-
-### Как сейчас запущен UI ручной проверки
-Поднят вручную в фоне (НЕ systemd):
-```bash
-cd /opt/catalog/backend && source venv/bin/activate && \
-nohup uvicorn app.main:app --host 0.0.0.0 --port 8001 > /opt/catalog/uvicorn.log 2>&1 &
-```
-Открывается: **http://31.192.110.121:8001/api/review**
-(первый клик по товару ~минуту — грузится модель эмбеддингов, потом мгновенно).
-TODO: оформить как systemd-сервис (чтобы переживал перезагрузку).
+- `industry_standards`: **1888 позиций** Приказа 838 (full_code, embedding(768),
+  keywords[]). СТАБИЛЬНО, не трогаем; `reset_catalog.py` его сохраняет.
+- `products` / `supplier_products` / `product_standard_mapping`: **в процессе
+  перезаливки**. В этой сессии каталог чистили `reset_catalog.py` (всё в 0),
+  потом пользователь заново грузил прайс (~2188 строк) и пытался классифицировать.
+  Классификация упёрлась в недоступность LLM (Yandex — проблемы доступа; Groq —
+  геоблок РФ 403). Поэтому маппинги, скорее всего, пустые/частичные — уточнить в
+  начале сессии: `GET /api/products/suppliers` или SQL `SELECT count(*) FROM products;`.
 
 ---
 
-## 3. ТЕКУЩЕЕ СОСТОЯНИЕ БД
+## 4. АРХИТЕКТУРА МАППИНГА (товар → позиция 838)
 
-- `industry_standards`: **1888 позиций** Приказа 838 (+ колонка `full_code`,
-  embedding(768), keywords[]). Перепарсено корректно (старый парсер терял 511).
-- `products`: **934 товара** (10 из шаблона + ~924 из app.1000psc.csv),
-  эмбеддинги по **name only** (так точнее — name+desc пробовали, хуже).
-- `product_standard_mapping`: заполнен авто-маппингом — **630 авто / 301 на ручную /
-  3 null** (всего 931 запись; маппинги пишутся upsert'ом, есть UNIQUE(product_id,standard_id)).
-
----
-
-## 4. АРХИТЕКТУРА МАППИНГА (готова и измерена)
-
-Точка входа: `MappingService.classify_product(product_id)` в
+Точка входа: `MappingService.classify_product(product_id, provider=...)` в
 `backend/app/services/mapping_service.py`. Пайплайн:
-
-1. **Детерминированный роутер** (`_rule_match`, без LLM). Закрывает самый частый
-   класс — демонстрационные таблицы:
-   - «Таблицы демонстрационные…»/«Комплект таблиц…» (не раздаточные, не
-     электронные, не мебель) → **код 2.17** «Комплект демонстрационных учебных
-     таблиц (по предметной области)»; если предмет **физика** → **код 2.14.137**.
-   - На выборке: срабатывает на ~60% товаров, точность ~98%.
-   - Коды резолвятся через `_std_index["code2id"]`. Константы:
-     `CODE_TABLES_GENERIC="2.17"`, `CODE_TABLES_PHYSICS="2.14.137"`.
-2. **Гибридный ретрив** (`map_product_to_standards`, top_k=20): пул кандидатов =
-   вектор top-K (pgvector по эмбеддингу name) **∪** keyword-IDF top-K (леммы
-   name+description, глушим только функц. слова) **∪** все 22 «по предметной
-   области» генерик-позиции (иначе вытесняются предметными). recall@20 ≈ 91%.
-3. **LLM-судья** (`llm_mapping_service.get_llm_mapping`, полная yandexgpt):
-   кандидаты помечены областью/кабинетом («[По предметной области] …»,
-   «[Кабинет химии] …»). Промпт матчит по ТИПУ изделия (таблицы≠карты≠модели≠
-   пособия), знает конвенцию «по предметной области», русский≠иностранный,
-   блок «частые ошибки — не путай», есть retry/backoff (2/4/8с на таймаут/5xx/429).
-4. **Калибровка авто/ручная** по СОГЛАСИЮ КАНАЛОВ (уверенность LLM бесполезна —
-   всегда 0.9–1.0): если выбранную позицию подтвердили И вектор, И keyword → авто;
-   иначе → ручная. Роутер → всегда авто.
-
-**Измеренная точность (выборка 99 размеченных товаров):**
-- accuracy **82%**, recall **91%**, precision@pool **90%**.
-- роутер: 60 шт, 98%. LLM: 39 шт, 56% (трудный хвост).
-- **АВТО: 67 шт, точность 99%.** РУЧНАЯ: 32 шт (туда уходят ошибки) — калибровка работает.
-- Часть оставшихся «ошибок» — спорные/ошибочные метки эксперта, не сбои системы.
+1. **Детерминированный роутер** (`_rule_match`, без LLM): демонстрационные таблицы
+   → код `2.17` (физика → `2.14.137`). ~60% товаров, точность ~98%. GPT не трогает.
+2. **Гибридный ретрив** (`map_product_to_standards`, top_k=20): пул = вектор
+   top-K (pgvector по эмбеддингу name) ∪ keyword-IDF top-K ∪ все 22 «по предметной
+   области» генерик-позиции. recall@20 ≈ 91%.
+3. **LLM-судья** (`llm_mapping_service.get_llm_mapping`, переключаемый провайдер):
+   выбирает один стандарт или null. Промпт матчит по ТИПУ изделия.
+4. **Калибровка авто/ручная** по согласию каналов ретрива (уверенность LLM
+   неинформативна): подтвердили И вектор, И keyword → авто; иначе → ручная.
+Измеренная (на Yandex, выборка 99): accuracy ~82%, авто-канал ~99% точности.
+Качество Groq/Gemini как судьи НЕ измерялось.
 
 ---
 
-## 5. КАРТА ФАЙЛОВ
+## 5. LLM-ПРОВАЙДЕРЫ (судья) — переключаемые
 
-### Боевой код (`backend/app/`)
-- `services/mapping_service.py` — **ядро**: роутер + гибридный ретрив + classify_product
-  + auto_map_all_products. Синглтоны: модель эмбеддингов, IDF-индекс стандартов.
-- `services/llm_mapping_service.py` — промпт судьи + вызов YandexGPT + retry.
-- `services/product_service.py` — импорт товаров из CSV (парсинг цен, эмбеддинг по name).
-- `api/endpoints/mapping.py` — `POST /api/mapping/auto-map`, `GET /api/mapping/candidates/{id}`.
-- `api/endpoints/products.py` — `POST /api/products/upload` (CSV + поставщик).
-- `api/endpoints/review.py` — **UI ручной проверки** + API (`/api/review`, /queue,
-  /stats, /product/{id}/candidates, /mapping/{id}/approve|reassign|reject).
-- `core/config.py` — Settings (читает `.env`). `core/database.py` — движок БД
-  (читает `settings.database_url`, чинит схему на asyncpg; фоллбэк 5432).
-- `main.py` — регистрация роутеров (products, mapping, review).
+Реестр и вызовы — `backend/app/services/llm_mapping_service.py`.
+`PROVIDERS = {yandex, groq, aitunnel}`. Выбор провайдера — в UI ПЕРЕД
+классификацией (селектор на странице поставщика), либо `?provider=` в API.
+Ненастроенные (нет ключа) в селекторе задизейблены.
 
-### Скрипты (`backend/scripts/`) — все принимают `--db-url`
-- `parse_order_838.py` — xlsx → `data/output/order_838_tree.json` (1888 позиций, иерархия из кода).
-- `import_standards.py` — JSON → industry_standards (+ full_code, DELETE+INSERT, леммы keywords).
-- `generate_embeddings.py` — эмбеддинги стандартов (~10–15 мин на 1888).
-- `regenerate_product_embeddings.py` — эмбеддинги товаров (`--mode name|name_desc`, дефолт name).
-- `import_products.py` — импорт товаров из CSV (`--csv --supplier-name --db-url`).
-- `run_automap.py` — **полный авто-маппинг** всех товаров (пишет в БД, печатает распределение).
-- `diagnose_mapping.py` — read-only диагностика гибрида (распределение скоров).
-- `simulate_strategies.py` — read-only сравнение стратегий скоринга.
-- `llm_rerank_eval.py` — read-only оценка LLM-реранжирования (есть `--sample`, `--sleep`).
-- `eval_pipeline.py` — **сквозная оценка** на размеченной выборке (роутер+LLM,
-  пишет `logs/eval_dump_*.csv`, метрики accuracy/recall/precision/АВТО/РУЧНАЯ).
-- `recall_experiment.py` — read-only recall vector/keyword/union по размеченным.
-- `make_review_sheet.py` / `score_review.py` — генерация листа проверки из llm_rerank JSON / подсчёт.
-- `export_standards.py` — выгрузка справочника 838 в `logs/standards_838.csv` (+ full_code).
+Ключи/настройки в `backend/.env`:
+- **YandexGPT:** `YANDEX_GPT_API_KEY`, `YANDEX_GPT_FOLDER_ID`,
+  `YANDEX_GPT_MODEL_URI=gpt://<folder>/yandexgpt/latest` (полная, НЕ lite).
+  Статус на конец сессии: у пользователя проблемы с доступом, чинит сам.
+- **Groq:** `GROQ_API_KEY` (+ `GROQ_MODEL`, дефолт `llama-3.3-70b-versatile`).
+  **Геоблокирует РФ** → `403 {"error":{"message":"Forbidden"}}`. Работает только
+  через прокси: `LLM_PROXY=http://user:pass@host:port` или `socks5://...`
+  (для socks нужен `httpx[socks]`, уже в requirements). Прокси применяется ТОЛЬКО
+  к LLM-запросам. Пользователь от прокси пока отказался.
+- **AITunnel:** `AITUNNEL_API_KEY` (+ `AITUNNEL_MODEL` дефолт `gemini-2.5-flash`,
+  `AITUNNEL_BASE_URL` дефолт `https://api.aitunnel.ru/v1`). OpenAI-совместимый
+  агрегатор, **доступен из РФ напрямую**. Добавлен последним — это текущий рабочий
+  путь для классификации. Платный (оплата за токены).
+- `LLM_PROVIDER=yandex|groq|aitunnel` — провайдер по умолчанию.
 
-### Данные/эталон (`logs/`, в git)
-- `logs/standards_838.csv` — справочник всех 1888 позиций (id, full_code, кабинет, название).
-- `logs/review_labeled_newids.csv` — **ЭКСПЕРТНЫЙ ЭТАЛОН**: 99 товаров с correct_std_id
-  (новые id). Метки уже почищены (37→1923, 884→2108, 920→1910, физика-таблицы→2288).
-- `logs/eval_dump_*.csv`, `logs/diagnose_*`, `logs/simulate_*`, `logs/llm_rerank_*` — прогоны.
+Добавить нового OpenAI-совместимого провайдера = ~3 правки: ключ в `config.py`,
+ветка в `provider_configured`, обёртка через `_call_openai_compatible(...)`. UI
+подхватит автоматически.
 
-### Доки
-- `PROJECT_CONTEXT.md` — обновлён (актуальная архитектура, 1888 позиций, full model).
-- `HANDOFF.md` — этот файл.
+Обрыв при сбое: если LLM даёт **100 ошибок подряд** (`max_consecutive_llm_errors`),
+классификация завершается `status=error` с понятным текстом (тело ответа провайдера
+теперь видно и в UI, и в логе). Роутер серию не сбивает; честный ответ модели её
+обнуляет.
 
 ---
 
-## 6. ЧАСТЫЕ КОМАНДЫ (на сервере)
+## 6. ФОНОВЫЕ ЗАДАЧИ (импорт и классификация)
 
-Полный авто-маппинг (пишет в БД, ~20–40 мин):
+Обе операции — длинные (тысячи товаров, LLM), поэтому НЕ синхронные (иначе таймаут
+шлюза → 502). Реестр — `backend/app/services/jobs.py` (in-memory, один процесс
+uvicorn). Запуск: `run_job(job, body)` через `asyncio.create_task` со своей
+async-сессией БД.
+- `POST /api/products/upload` и `POST /api/mapping/auto-map` сразу возвращают
+  `{job_id}` (upload — ещё `supplier_id`, `supplier_name`).
+- `GET /api/jobs/{id}` → `{status: running|done|error, processed, total, counters,
+  message, error, result, elapsed}`. UI опрашивает (`pollJob`) и рисует прогресс.
+- Тяжёлый `encode` эмбеддингов вынесен в поток (`asyncio.to_thread`), модель —
+  ленивый синглтон, чтобы опрос статуса не вис.
+
+---
+
+## 7. КАРТА ФАЙЛОВ
+
+### Backend (`backend/app/`)
+- `main.py` — FastAPI, роутеры (products, mapping, review, jobs), монтирование SPA
+  на `/app` (`SPAStaticFiles` с fallback на index.html), `print` статуса SPA в лог.
+- `core/config.py` — Settings (читает `.env`); **guard на не-UTF-8 .env**; ключи
+  всех провайдеров + `LLM_PROXY`.
+- `core/database.py` — async engine + `async_session` (используется фоновыми
+  задачами), `get_db` (DI). URL из `settings.database_url`, схема под asyncpg.
+- `services/mapping_service.py` — ядро: роутер + гибридный ретрив +
+  `classify_product(provider=)` + `auto_map_all_products(supplier_id, only_unmapped,
+  provider, progress, max_consecutive_llm_errors)`; `LLMUnavailableError`.
+- `services/llm_mapping_service.py` — диспетчер провайдеров, общий
+  `_call_openai_compatible`, `_call_yandex`, `_post_with_retry` (ретраи + тело
+  ошибки в reason), `providers_status()`, `provider_configured()`, `_make_client()`
+  (httpx с опц. прокси).
+- `services/product_service.py` — импорт CSV: `_cell` (NaN-safe), `_internal_sku`
+  (AUTO-артикул при пустом «Артикул»), **матчинг per-supplier**, batch-эмбеддинги
+  через to_thread, `progress`-callback; ленивый синглтон модели (`get_embedding_model`).
+- `services/jobs.py` — `Job`, `JobManager` (`jobs`), `run_job`.
+- `api/endpoints/products.py` — `POST /api/products/upload` (фон),
+  `GET /api/products/suppliers` (счётчики), `GET /api/products?supplier_id=&status=`
+  (товары с маппингом и ценой).
+- `api/endpoints/mapping.py` — `GET /api/mapping/providers`,
+  `POST /api/mapping/auto-map` (фон, `provider`), `GET /api/mapping/candidates/{id}`.
+- `api/endpoints/review.py` — ручная проверка: `/api/review` (HTML), `/stats`,
+  `/queue`, `/product/{id}/candidates`, `/mapping/{id}/approve|reassign|reject`.
+- `api/endpoints/jobs.py` — `GET /api/jobs/{id}`.
+
+### Frontend (`frontend/`, React 18 + Vite + TS, раздаётся под `/app`)
+- `src/api.ts` — типы + клиент: upload/listSuppliers/listProducts/autoMap/
+  listProviders/pollJob/getJob/review-экшены. **Все пути относительные.**
+- `src/App.tsx` — роуты: `/` (поставщики), `/upload`, `/supplier/:id`.
+- `src/pages/SuppliersPage.tsx` — список поставщиков со счётчиками.
+- `src/pages/UploadPage.tsx` — форма + CSV (drag&drop), фоновый импорт с прогрессом.
+- `src/pages/SupplierDetailPage.tsx` — **селектор LLM-провайдера** + «Классифицировать
+  новые»/«Переклассифицировать все» (фон + прогресс + ошибки), таблица товаров со
+  статусом/позицией 838/ценой, фильтры, модальная проверка.
+- `src/components/JobProgress.tsx` — прогресс-бар + счётчики задачи.
+- `src/components/ReviewPanel.tsx` — модалка проверки (кандидаты, approve/reassign/reject).
+- `src/styles.css` — стили. `frontend/dist/` — собранный SPA (коммитится!).
+
+### Скрипты (`backend/scripts/`, все берут `--db-url`)
+- `restart_server.sh` — перезапуск uvicorn (ждёт готовности HTTP).
+- `reset_catalog.py --yes` — полный сброс товаров/поставщиков/маппингов (838
+  сохраняется); без `--yes` — dry-run.
+- `reset_supplier.py --supplier-id N [--dry-run]` — сброс одного поставщика.
+- `migrate_drop_sku_unique.py` — снять глобальный UNIQUE с `products.sku` (товары
+  стали per-supplier). Идемпотентно, одноразово на боевой БД.
+- `import_products.py`, `run_automap.py`, `eval_pipeline.py`, `parse_order_838.py`,
+  `import_standards.py`, `generate_embeddings.py`, `regenerate_product_embeddings.py`,
+  `export_standards.py`, `diagnose_mapping.py`, `simulate_strategies.py`,
+  `recall_experiment.py`, `llm_rerank_eval.py`, `make_review_sheet.py`,
+  `score_review.py`, `regenerate_standard_keywords.py` — оффлайн-инструменты.
+
+---
+
+## 8. СХЕМА БД (полная, `database/init.sql`)
+
+- **`industry_standards`** — 1888 позиций 838: id, industry_code, section_code,
+  subsection_code, section_name, subsection_name, item_name, equipment_type,
+  keywords[], okpd2_code, ktru_code, embedding(768). (+ есть колонка `full_code`,
+  добавлена скриптами — иерархический код вида `2.14.137`.)
+- **`products`** — id, **sku (НЕ уникален глобально!)**, name, description, unit,
+  manufacturer, vat_included, okpd2_code, ktru_code, properties(JSONB), embedding(768).
+  Товары ведутся **per-supplier**: один артикул у разных поставщиков = разные товары.
+- **`suppliers`** — id, name, short_name, inn(UNIQUE), contact_person, phone, email,
+  is_active.
+- **`supplier_products`** — связь M:N: id, supplier_id, product_id, supplier_sku,
+  cost_price NUMERIC(15,2), retail_price NUMERIC(15,2), delivery_days,
+  stock_quantity, is_available. **UNIQUE(supplier_id, product_id).**
+- **`product_standard_mapping`** — товар↔стандарт: id, product_id, standard_id,
+  match_score, match_reason, is_manual, rejected. **UNIQUE(product_id, standard_id).**
+  Статус: авто (NOT is_manual, NOT rejected) / на проверку (is_manual) / отклонён (rejected).
+- **`system_settings`** — key-value: `vat_rate=0.22`, `currency=RUB`,
+  `company_name=Школьный каталог`.
+- **`estimates`** — id, name, description, total_amount NUMERIC(15,2), created_at.
+  **ПОКА ПУСТАЯ, кода для смет нет.**
+- **`estimate_items`** — id, estimate_id FK→estimates (ON DELETE CASCADE),
+  standard_id FK→industry_standards (SET NULL), product_id FK→products (SET NULL),
+  supplier_id FK→suppliers (SET NULL), quantity NUMERIC(10,2), unit_price
+  NUMERIC(15,2), total_price NUMERIC(15,2), created_at. **ПОКА ПУСТАЯ.**
+
+---
+
+## 9. ЦЕЛЬ СЛЕДУЮЩЕЙ СЕССИИ: ВХОДЯЩИЕ СМЕТЫ
+
+Задача — работа с входящими сметами (школа/заказчик присылает потребность, система
+помогает её закрыть товарами из каталога с ценами поставщиков). Таблицы
+`estimates`/`estimate_items` в схеме ЕСТЬ, но **кода и UI под сметы пока нет** —
+это с нуля.
+
+### Что уже можно опереть (готовая основа)
+- Связь «позиция 838 → товары → цены»: по `standard_id` найти товары можно через
+  `product_standard_mapping` (WHERE standard_id=X AND NOT rejected), цены/поставщиков
+  — через `supplier_products` (cost_price/retail_price), НДС — `system_settings.vat_rate`.
+- Тот же гибридный ретрив + LLM-судья, что для товаров, применим к строкам сметы
+  (если строки — свободный текст, а не коды 838): сопоставить строку сметы → позицию
+  838 (и/или сразу → товары).
+- Фоновые задачи (`jobs.py`) и провайдеры LLM — переиспользуемы.
+
+### ОТКРЫТЫЕ ВОПРОСЫ — задать пользователю в начале (не угадывать!)
+1. **Формат входящей сметы:** Excel/CSV? Какие колонки? Строки ссылаются на коды
+   Приказа 838 (`full_code`) / наименования позиций 838 / свободный текст
+   потребности? Есть ли количества?
+2. **Что значит «обработать смету»:** подобрать под каждую строку товар(ы) из
+   каталога с ценой? Выбрать одного поставщика (самого дешёвого по retail_price?
+   по cost_price? по сроку delivery_days/наличию stock_quantity?) или показать все
+   варианты для выбора?
+3. **Результат:** заполненная смета с позициями/поставщиками/ценами/итогами и НДС?
+   Экспорт обратно в Excel/CSV (UTF-8 BOM)? Только просмотр в UI?
+4. **UI:** новый раздел в SPA (загрузка сметы → подбор → проверка/правка позиций →
+   итог/экспорт)? Нужна ли ручная корректировка подобранных товаров (как в /review)?
+5. **Несматченные строки:** что делать со строками сметы, под которые в каталоге нет
+   товара (нет маппинга на эту позицию 838)?
+
+### Вероятный план реализации (уточнить после ответов)
+- Backend: сервис `estimate_service` (парсинг входящего файла → строки;
+  сопоставление строка→standard_id [по коду или ретрив+LLM]; подбор товаров+цен по
+  standard_id; запись в `estimates`/`estimate_items`; пересчёт total_amount/НДС).
+- Endpoints: `POST /api/estimates/upload` (фон, как товары), `GET /api/estimates`,
+  `GET /api/estimates/{id}` (позиции с вариантами товаров/цен),
+  `POST /api/estimates/{id}/items/{item_id}/choose` (выбор товара/поставщика),
+  `GET /api/estimates/{id}/export` (Excel/CSV).
+- Frontend: страницы списка смет, загрузки, детальной сметы с подбором/правкой/итогом.
+- Переиспользовать: фоновые задачи, прогресс, LLM-провайдеры, гибридный ретрив.
+
+---
+
+## 10. ИЗВЕСТНЫЕ НЮАНСЫ / ДОЛГИ
+
+- После `git pull` на сервере — ВСЕГДА `bash backend/scripts/restart_server.sh`
+  (иначе старый процесс = старый код, и снаружи возможен 502).
+- `.env` — только UTF-8, без кириллических комментариев.
+- Groq из РФ не работает без `LLM_PROXY` (геоблок 403). Текущий рабочий провайдер
+  из РФ — AITunnel; Yandex — когда пользователь починит доступ.
+- Точность судьи на Groq/AITunnel(Gemini) не измерена — при желании
+  параметризовать `eval_pipeline.py` по `--provider` и сравнить на
+  `logs/review_labeled_newids.csv` (99 размеченных товаров).
+- Импорт считает эмбеддинг на КАЖДЫЙ новый товар (раньше пустые артикулы
+  схлопывались в один «nan» — это был баг, починен). На тысячах товаров векторизация
+  занимает минуты — батчится и идёт в потоке, прогресс виден.
+- `config.py` поля через `os.getenv` — работает, но «не чисто» (можно отрефакторить
+  на чистый pydantic-settings).
+- UI на скрипте/`nohup` — не systemd (не переживает ребут сервера). Долг.
+- Экспорт результатов маппинга/смет в Excel — пока нет.
+
+---
+
+## 11. ЧАСТЫЕ КОМАНДЫ (сервер)
+
 ```bash
-python scripts/run_automap.py --db-url "$DBURL"
+# подтянуть + перезапустить (после любого git pull)
+cd /opt/catalog && git pull origin claude/handoff-review-7z5w0i
+bash backend/scripts/restart_server.sh
+
+# строка БД для скриптов
+cd /opt/catalog/backend && source venv/bin/activate
+DBURL="$(grep -E '^database_url=' .env | cut -d= -f2- | tr -d '\"' | sed 's#^postgresql://#postgresql+asyncpg://#')"
+
+# полный сброс каталога начисто (838 сохраняется)
+python scripts/reset_catalog.py --db-url "$DBURL" --yes
+
+# проверить лог сервера
+tail -n 60 /opt/catalog/uvicorn.log
 ```
-Сквозная оценка качества на эталоне (~5 мин, ~40 вызовов LLM):
-```bash
-python scripts/eval_pipeline.py --csv ../logs/review_labeled_newids.csv --db-url "$DBURL"
-# затем при желании: cd /opt/catalog && git add logs/eval_dump_*.csv && git commit -m "eval" && git push
-```
-Пересборка классификатора (если меняли парсер): parse → import → generate_embeddings → export.
 
----
-
-## 7. ИЗВЕСТНЫЕ НЮАНСЫ / ДОЛГИ
-
-- Уверенность LLM неинформативна (всё 0.9–1.0) — для авто/ручная используем
-  согласие каналов ретрива (не трогать без замера).
-- `config.py` поля дефолтятся через `os.getenv(...)` — работает, но «не чисто»;
-  при желании отрефакторить на чистый pydantic-settings.
-- Роутер расширять на карты/раздаточные НЕ стали — второго регулярного класса нет
-  (таблицы = 65 из 99, остальное предметно-зависимый хвост, его тянет LLM).
-- UI на `nohup` — оформить systemd-юнит.
-- Батчинг/конкурентность вызовов LLM для ускорения больших загрузок — не сделано.
-- Экспорт результатов маппинга в Excel/CSV — не сделано.
-
----
-
-## 8. ЦЕЛЬ СЛЕДУЮЩЕЙ СЕССИИ: ФРОНТЕНД
-
-Делаем фронтенд (полноценный UI, не только служебная страница):
-1. **Инструмент загрузки новых прайс-листов** (CSV/Excel поставщиков):
-   форма загрузки → бэкенд уже умеет (`POST /api/products/upload`, парсинг цен в
-   `product_service`), но: проверить форматы, показать прогресс/ошибки строк,
-   привязку к поставщику.
-2. **Классификация загруженного** прайса: запустить маппинг по новым товарам
-   (есть `auto_map_all_products` / `classify_product`) и показать результат —
-   что авто, что на ручную, с возможностью проверки (уже есть `/api/review`).
-
-Нюансы под фронт:
-- Бэкенд на FastAPI; решить, делать SPA (React/Vue) или server-rendered/vanilla
-  (как текущая `/api/review`). Текущий UI — самодостаточный HTML+JS внутри FastAPI.
-- `auto_map_all_products` сейчас маппит ВСЕ товары; для «классифицировать только
-  что загруженное» понадобится фильтр по поставщику/новизне (доработать).
-- Импорт генерирует эмбеддинг по name (в ProductService); если решим иначе —
-  согласовать с ретривом.
-- Модель эмбеддингов грузится ~минуту на первом запросе — учесть в UX.
+UI: `http://31.192.110.121:8001/app/` (сметы будем добавлять туда же).
