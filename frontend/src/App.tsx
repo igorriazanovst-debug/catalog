@@ -2,6 +2,9 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import SuppliersPage from "./pages/SuppliersPage";
 import UploadPage from "./pages/UploadPage";
 import SupplierDetailPage from "./pages/SupplierDetailPage";
+import EstimatesPage from "./pages/EstimatesPage";
+import EstimateUploadPage from "./pages/EstimateUploadPage";
+import EstimateDetailPage from "./pages/EstimateDetailPage";
 
 export default function App() {
   return (
@@ -13,6 +16,7 @@ export default function App() {
             Поставщики
           </NavLink>
           <NavLink to="/upload">Загрузить прайс</NavLink>
+          <NavLink to="/estimates">Сметы</NavLink>
         </nav>
       </header>
       <main className="container">
@@ -20,6 +24,9 @@ export default function App() {
           <Route path="/" element={<SuppliersPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/supplier/:id" element={<SupplierDetailPage />} />
+          <Route path="/estimates" element={<EstimatesPage />} />
+          <Route path="/estimates/upload" element={<EstimateUploadPage />} />
+          <Route path="/estimates/:id" element={<EstimateDetailPage />} />
         </Routes>
       </main>
     </>

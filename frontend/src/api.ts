@@ -37,16 +37,40 @@ export interface Provider {
 
 export type JobStatus = "running" | "done" | "error";
 
+// Итог подбора по смете (job.result для kind="estimate").
+export interface EstimateSummary {
+  positions: number;
+  bundles: number;
+  subitems_total: number;
+  matched_with_offer: number;
+  resolved_by_code: number;
+  resolved_by_llm: number;
+  resolved_by_text: number;
+  unresolved: number;
+  subtotal: number;
+  vat_rate: number;
+  vat_amount: number;
+  total_with_vat: number;
+  price_basis: string;
+}
+
+export interface EstimateJobResult {
+  estimate_id: number;
+  items: number;
+  total_amount: number;
+  summary: EstimateSummary;
+}
+
 export interface Job {
   id: string;
-  kind: "import" | "classify";
+  kind: "import" | "classify" | "estimate";
   status: JobStatus;
   total: number;
   processed: number;
   counters: Record<string, number>;
   message: string;
   error: string | null;
-  result: ImportResult | ClassifyResult | null;
+  result: ImportResult | ClassifyResult | EstimateJobResult | null;
   elapsed: number;
 }
 
@@ -219,6 +243,140 @@ export const productCandidates = (productId: number) =>
   jget<{ candidates: Candidate[] }>(
     `/api/review/product/${productId}/candidates`
   ).then((d) => d.candidates);
+
+// ---------------------------------------------------------------------------
+// Сметы (входящие)
+// ---------------------------------------------------------------------------
+export interface EstimateListItem {
+  id: number;
+  name: string;
+  description: string | null;
+  total_amount: number;
+  created_at: string | null;
+  items: number;
+  matched: number;
+}
+
+export interface EstimateItem {
+  id: number;
+  source_name: string | null;
+  group_name: string | null;
+  unit: string | null;
+  match_method: string | null;
+  match_reason: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  total_price: number | null;
+  standard_id: number | null;
+  standard_name: string | null;
+  full_code: string | null;
+  product_id: number | null;
+  product_name: string | null;
+  sku: string | null;
+  supplier_id: number | null;
+  supplier_name: string | null;
+}
+
+export interface EstimateDetail {
+  id: number;
+  name: string;
+  description: string | null;
+  total_amount: number;
+  created_at: string | null;
+  items: EstimateItem[];
+}
+
+export interface EstimateOffer {
+  product_id: number;
+  product_name: string;
+  sku: string | null;
+  manufacturer: string | null;
+  supplier_id: number;
+  supplier_name: string;
+  retail_price: number | null;
+  cost_price: number | null;
+  delivery_days: number | null;
+  stock_quantity: number | null;
+  standard_id: number;
+  match_score: number | null;
+  is_manual: boolean;
+}
+
+export interface EstimateUploadOptions {
+  name?: string;
+  use_llm?: boolean;
+  provider?: string;
+  decompose?: boolean;
+  price_basis?: "cost" | "retail";
+}
+
+export function uploadEstimate(
+  file: File,
+  opts: EstimateUploadOptions,
+  onProgress?: (pct: number) => void
+): Promise<{ job_id: string; name: string; positions: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.name) form.append("name", opts.name);
+  form.append("use_llm", String(opts.use_llm ?? true));
+  if (opts.provider) form.append("provider", opts.provider);
+  form.append("decompose", String(opts.decompose ?? true));
+  form.append("price_basis", opts.price_basis ?? "cost");
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/estimates/upload");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        let detail = xhr.responseText;
+        try {
+          detail = JSON.parse(xhr.responseText).detail || detail;
+        } catch {
+          /* как есть */
+        }
+        reject(new Error(detail));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Сетевая ошибка при загрузке"));
+    xhr.send(form);
+  });
+}
+
+export const listEstimates = () =>
+  jget<{ items: EstimateListItem[] }>("/api/estimates").then((d) => d.items);
+
+export const getEstimate = (id: number) =>
+  jget<EstimateDetail>(`/api/estimates/${id}`);
+
+export const itemCandidates = (estimateId: number, itemId: number) =>
+  jget<{ candidates: EstimateOffer[] }>(
+    `/api/estimates/${estimateId}/items/${itemId}/candidates`
+  ).then((d) => d.candidates);
+
+export const chooseItem = (
+  estimateId: number,
+  itemId: number,
+  productId: number,
+  supplierId: number,
+  priceBasis: "cost" | "retail" = "cost"
+) =>
+  jpost<{ status: string; unit_price: number; total_price: number }>(
+    `/api/estimates/${estimateId}/items/${itemId}/choose?product_id=${productId}` +
+      `&supplier_id=${supplierId}&price_basis=${priceBasis}`
+  );
+
+export async function deleteEstimate(id: number): Promise<void> {
+  const r = await fetch(`/api/estimates/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+}
+
+export const exportEstimateUrl = (id: number) => `/api/estimates/${id}/export`;
 
 export const approveMapping = (mappingId: number) =>
   jpost(`/api/review/mapping/${mappingId}/approve`);
