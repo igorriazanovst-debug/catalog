@@ -180,6 +180,16 @@ async-сессией БД.
   значение/оператор/Min/Max. Возвращает нормализованные позиции + диагностику
   (какая строка-шапка, как легли колонки, предупреждения). Это «контракт» для
   следующих шагов (позиция→838→товары→цены).
+- `services/estimate_service.py` — **сопоставление позиций сметы с каталогом,
+  БЕЗ LLM, read-only (в БД не пишет)**. `EstimateMatcher(db, price_basis, top_k)`:
+  `match_line` / `match_estimate(parsed)`. Шаг 1 (позиция→838): по коду —
+  КТРУ→`industry_standards.ktru_code`, иначе ОКПД2→`okpd2_code`; если по коду
+  пусто — текстовый фоллбэк (гибридный ретрив через `MappingService`). Шаг 2
+  (838→товар→цена): товары через `product_standard_mapping` (NOT rejected) +
+  `supplier_products`, выбор — самое дешёвое доступное предложение (по
+  retail_price; `--price cost` для себестоимости). Итог + НДС из
+  `system_settings.vat_rate`. `db_code_availability()` — диагностика (заполнены
+  ли коды/маппинги). **Поставщики пока из ВСЕХ** (фильтра нет).
 - `api/endpoints/products.py` — `POST /api/products/upload` (фон),
   `GET /api/products/suppliers` (счётчики), `GET /api/products?supplier_id=&status=`
   (товары с маппингом и ценой).
@@ -210,6 +220,10 @@ async-сессией БД.
 - `parse_estimate.py <файл.xlsx> [...] [--json out]` — **предварительный разбор
   сметы**: печатает распознанную шапку/колонки/позиции (использует
   `app/services/estimate_parser.py`). Инструмент проверки на реальных сметах.
+- `match_estimate.py <файл.xlsx> [...] --db-url ... [--price retail|cost] [--top-k N]`
+  — **подбор товаров под смету** (разбор + сопоставление, без LLM, read-only).
+  Печатает доступность в БД, по каждой позиции: стандарт 838 (метод
+  ktru/okpd2/text), выбранный товар/поставщика/цену, альтернативы, и итог с НДС.
 - `migrate_drop_sku_unique.py` — снять глобальный UNIQUE с `products.sku` (товары
   стали per-supplier). Идемпотентно, одноразово на боевой БД.
 - `import_products.py`, `run_automap.py`, `eval_pipeline.py`, `parse_order_838.py`,
@@ -278,6 +292,26 @@ async-сессией БД.
 Дальше: сопоставление позиции → 838 (по коду напрямую, иначе гибридный ретрив)
 → товары/цены по `product_standard_mapping`+`supplier_products` (мин. цена) →
 запись в `estimates`/`estimate_items`. Парсер коды, БД и LLM НЕ трогает.
+
+### СДЕЛАНО: сопоставление сметы с каталогом (этап правил, без LLM)
+`estimate_service.py` (`EstimateMatcher`) + `scripts/match_estimate.py`. Стратегия
+подтверждена пользователем — **код приоритетно, текст — фоллбэк** (вариант 3).
+ВАЖНЫЙ нюанс БД: импорт 838 НЕ проставлял `industry_standards.ktru_code/okpd2_code`,
+а импорт товаров — `products.ktru_code`. Значит код-матч, скорее всего, пустой и
+сработает текстовый фоллбэк. `match_estimate.py` сразу печатает доступность в БД
+(сколько стандартов/товаров с кодами, сколько маппингов) — по ней видно, что
+матчится. Чтобы включить точный код-матч, нужен отдельный шаг: проставить КТРУ/ОКПД2
+в `industry_standards` (и/или в товары) — НЕ сделано, кандидат на следующий шаг.
+
+**Проверить на сервере (read-only, ничего не пишет):**
+```bash
+cd /opt/catalog/backend && source venv/bin/activate
+DBURL="$(grep -E '^database_url=' .env | cut -d= -f2- | tr -d '\"' | sed 's#^postgresql://#postgresql+asyncpg://#')"
+python scripts/match_estimate.py ../data/input/smeta-1.xlsx ../data/input/smeta-2.xlsx --db-url "$DBURL"
+```
+Дальше (после проверки качества подбора): запись в `estimates`/`estimate_items`,
+эндпоинты `POST /api/estimates/upload` (фон) и UI; затем подключение LLM-судьи к
+текстовому фоллбэку (переиспользуя `llm_mapping_service`); затем фильтр поставщиков.
 
 ### ОТКРЫТЫЕ ВОПРОСЫ — задать пользователю в начале (не угадывать!)
 1. **Формат входящей сметы:** Excel/CSV? Какие колонки? Строки ссылаются на коды
