@@ -69,7 +69,7 @@ def _print_result(res: dict) -> None:
             print(f"       цена×кол-во = {_money(r['unit_price'])} × {line['quantity']} "
                   f"= {_money(r['total_price'])}")
             if r["alternatives"]:
-                print(f"       альтернативы ({len(r['alternatives'])}), дороже:")
+                print(f"       другие предложения ({len(r['alternatives'])}):")
                 for a in r["alternatives"][:3]:
                     a_ms = a.get("match_score")
                     a_ms_s = "—" if a_ms is None else f"{a_ms:.2f}"
@@ -142,8 +142,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Подбор товаров под смету (без LLM)")
     p.add_argument("files", nargs="+", help="xlsx-файлы смет")
     p.add_argument("--db-url", default=DEFAULT_DB_URL)
-    p.add_argument("--price", choices=["retail", "cost"], default="retail",
-                   help="по какой цене выбирать «дешевле» и считать итог (по умолч. retail/РРЦ)")
+    p.add_argument("--price", choices=["retail", "cost"], default="cost",
+                   help="по какой цене выбирать «дешевле» и считать итог (по умолч. cost/себестоимость)")
     p.add_argument("--top-k", type=int, default=20, help="размер пула текстового ретрива")
     return p.parse_args()
 

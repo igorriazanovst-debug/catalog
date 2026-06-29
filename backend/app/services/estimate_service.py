@@ -11,8 +11,10 @@
         (переиспользуем `MappingService`). Лучший кандидат = выбранный стандарт.
   ШАГ 2. Стандарт → товары → цена: товары, привязанные к стандарту через
      `product_standard_mapping` (NOT rejected), их предложения поставщиков
-     (`supplier_products`). Критерий выбора (пока): самое дешёвое доступное
-     предложение (по retail_price). Остальные предложения — как альтернативы.
+     (`supplier_products`). Критерий выбора (по решению пользователя): СНАЧАЛА
+     КАЧЕСТВО маппинга (is_manual=FALSE выше очереди на проверку, затем выше
+     match_score), ПОТОМ цена — самое дешёвое по cost_price (себестоимость).
+     Остальные предложения — как альтернативы.
 
 LLM здесь НЕ используется. Выбор поставщика — пока из ВСЕХ (фильтра нет).
 Сервис read-only: ничего не пишет в БД (валидация качества подбора на реальных
@@ -41,7 +43,7 @@ PRICE_FIELDS = {"retail": "retail_price", "cost": "cost_price"}
 
 
 class EstimateMatcher:
-    def __init__(self, db: AsyncSession, price_basis: str = "retail",
+    def __init__(self, db: AsyncSession, price_basis: str = "cost",
                  top_k: int = 20):
         self.db = db
         self.mapping = MappingService(db)  # переиспользуем каналы ретрива
@@ -176,7 +178,11 @@ class EstimateMatcher:
         if not standard_ids:
             return []
         # Все доступные предложения поставщиков по товарам, привязанным к стандартам.
-        # Сортируем по выбранной цене: самое дешёвое — первым.
+        # Критерий (по решению пользователя): СНАЧАЛА КАЧЕСТВО маппинга, ПОТОМ цена.
+        #   1) is_manual=FALSE (авто-подтверждённые/одобренные вручную) выше, чем
+        #      is_manual=TRUE (ещё в очереди на проверку, доверие ниже);
+        #   2) внутри — выше match_score;
+        #   3) при равном качестве — дешевле (по выбранной цене).
         q = text(f"""
             SELECT sp.product_id, p.name, p.sku, p.manufacturer,
                    sp.supplier_id, s.name AS supplier_name,
@@ -191,7 +197,9 @@ class EstimateMatcher:
               AND NOT m.rejected
               AND sp.is_available = TRUE
               AND sp.{self.price_col} > 0
-            ORDER BY sp.{self.price_col} ASC
+            ORDER BY m.is_manual ASC,
+                     m.match_score DESC NULLS LAST,
+                     sp.{self.price_col} ASC
         """)
         r = await self.db.execute(q, {"ids": standard_ids})
         offers = []
