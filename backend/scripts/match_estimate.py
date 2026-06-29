@@ -56,8 +56,12 @@ def _print_result(res: dict) -> None:
             print(f"     → 838 [{method}]: НЕ сопоставлено")
         offer = r["chosen_offer"]
         if offer:
+            ms = offer.get("match_score")
+            ms_s = "—" if ms is None else f"{ms:.2f}"
+            kind = "ручной" if offer.get("is_manual") else "авто"
             print(f"     ✓ товар: {offer['product_name']} "
-                  f"(арт. {offer.get('sku')}, {offer.get('manufacturer') or '—'})")
+                  f"(арт. {offer.get('sku')}, {offer.get('manufacturer') or '—'}) "
+                  f"[маппинг: {kind}, score={ms_s}]")
             print(f"       поставщик: {offer['supplier_name']} | "
                   f"РРЦ={_money(offer.get('retail_price'))} "
                   f"себест.={_money(offer.get('cost_price'))} | "
@@ -65,8 +69,12 @@ def _print_result(res: dict) -> None:
             print(f"       цена×кол-во = {_money(r['unit_price'])} × {line['quantity']} "
                   f"= {_money(r['total_price'])}")
             if r["alternatives"]:
-                print(f"       альтернативы: {len(r['alternatives'])} "
-                      f"(дороже, от {_money(r['alternatives'][0].get('retail_price'))})")
+                print(f"       альтернативы ({len(r['alternatives'])}), дороже:")
+                for a in r["alternatives"][:3]:
+                    a_ms = a.get("match_score")
+                    a_ms_s = "—" if a_ms is None else f"{a_ms:.2f}"
+                    print(f"          · {_money(a.get('retail_price'))} — "
+                          f"{a['product_name'][:55]} ({a['supplier_name']}, score={a_ms_s})")
         # Для текстового матча покажем топ кандидатов 838 — проверить качество.
         if method == "text" and r["standard_candidates"]:
             print("       кандидаты 838 (ретрив):")

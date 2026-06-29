@@ -31,7 +31,7 @@ import re
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.mapping_service import MappingService
+from app.services.mapping_service import MappingService, lemmatize
 
 logger = logging.getLogger(__name__)
 
@@ -143,14 +143,17 @@ class EstimateMatcher:
 
     @staticmethod
     def _line_query(line: dict) -> str:
-        """Текст для ретрива: наименование + характеристики (имена и значения)."""
-        parts = [line.get("name") or ""]
-        for ch in line.get("characteristics", []):
-            nm = ch.get("name") or ""
-            val = ch.get("value") or ""
-            parts.append(f"{nm} {val}".strip())
-        q = " ".join(p for p in parts if p)
-        return q[:512]  # ретриву длинный хвост не нужен
+        """Текст для ретрива по 838. Главный сигнал — НАИМЕНОВАНИЕ позиции: в
+        44-ФЗ оно обычно совпадает с наименованием позиции 838. Характеристики
+        описывают СОДЕРЖИМОЕ набора (репродукции/портреты/таблицы и т.п.) и
+        способны увести ретрив в сторону (на стандарт одного из вложений), поэтому
+        их добавляем только если имени мало (коротко) для уверенного ретрива.
+        (Полный список характеристик остаётся в позиции — пригодится LLM-судье.)"""
+        name = (line.get("name") or "").strip()
+        if len(lemmatize(name)) >= 4:
+            return name[:512]
+        extra = " ".join((ch.get("name") or "") for ch in line.get("characteristics", []))
+        return (name + " " + extra).strip()[:512]
 
     async def _resolve_standard(self, line: dict) -> dict:
         """Вернуть {method, standards:[...], candidates:[...]} для позиции.
