@@ -46,6 +46,13 @@ logger = logging.getLogger(__name__)
 # retail_price (РРЦ) — цена для школы; cost_price — внутренняя себестоимость.
 PRICE_FIELDS = {"retail": "retail_price", "cost": "cost_price"}
 
+# Порог «строка — это цельный товар»: если наименование позиции уверенно
+# совпадает с позицией 838 (векторная близость топ-кандидата по ИМЕНИ >= порога),
+# то характеристики — это части ОДНОГО изделия, а не вложения набора, и разлагать
+# строку НЕ нужно. Подобрано по реальным сметам (смета-1: vec≈1.0 — цельный товар;
+# смета-2: vec≈0.69 — набор). Эвристика, можно калибровать.
+BUNDLE_GATE_SIMILARITY = 0.85
+
 
 class EstimateMatcher:
     def __init__(self, db: AsyncSession, price_basis: str = "cost",
@@ -318,15 +325,22 @@ class EstimateMatcher:
                          decompose: bool = False) -> dict:
         """Подбор под одну строку сметы. Если decompose и use_llm — сначала
         LLM-декомпозиция: цельный товар матчим как есть, набор разложим на
-        вложения и подберём каждое (1 строка → N позиций), цену суммируем."""
+        вложения и подберём каждое (1 строка → N позиций), цену суммируем.
+
+        ГЕЙТ перед декомпозицией: если наименование строки само уверенно совпадает
+        с позицией 838 (это цельный товар, характеристики = его части) — НЕ
+        разлагаем, иначе разнесли бы один прибор на детали (соленоид/катушки/...)."""
         if decompose and use_llm and line.get("characteristics"):
-            decomp = await get_llm_decomposition(
-                {"name": line.get("name", ""),
-                 "characteristics": line.get("characteristics", [])},
-                provider=provider,
-            )
-            if not decomp.get("error") and decomp.get("is_bundle"):
-                return await self._match_bundle(line, decomp["items"], provider)
+            _, name_top1 = await self._text_pool(line)
+            sim = (name_top1 or {}).get("vector_similarity") or 0.0
+            if sim < BUNDLE_GATE_SIMILARITY:
+                decomp = await get_llm_decomposition(
+                    {"name": line.get("name", ""),
+                     "characteristics": line.get("characteristics", [])},
+                    provider=provider,
+                )
+                if not decomp.get("error") and decomp.get("is_bundle"):
+                    return await self._match_bundle(line, decomp["items"], provider)
         return await self._match_single(line, use_llm=use_llm, provider=provider)
 
     async def _match_bundle(self, line: dict, items: list[dict],
