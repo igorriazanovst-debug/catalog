@@ -115,15 +115,13 @@ class EstimateMatcher:
         return [{"standard_id": x[0], "standard_name": x[1], "full_code": x[2]}
                 for x in r.fetchall()]
 
-    async def _by_text(self, query: str) -> list[dict]:
-        """Текстовый фоллбэк: гибридный ретрив по 838. Возвращает кандидатов,
-        отсортированных по убыванию «силы» совпадения (согласие каналов → выше)."""
+    async def _retrieve(self, query: str) -> list[dict]:
+        """Гибридный ретрив по 838 для одного запроса: пул = вектор ∪ keyword,
+        отсортирован по «силе» (согласие каналов → выше, затем по вектору)."""
         if not query.strip():
             return []
-        # Эмбеддинг запроса -> строка pgvector "[...]".
         vec = self.mapping.embedding_model.encode([query])[0]
         emb_str = "[" + ",".join(str(x) for x in vec.tolist()) + "]"
-
         vcands = await self.mapping._vector_candidates(emb_str, self.top_k)
         kcands = await self.mapping._keyword_candidates(query, self.top_k)
 
@@ -141,44 +139,71 @@ class EstimateMatcher:
                              "vector_similarity": None, "keyword_score": score,
                              "sources": ["keyword"]}
         cands = list(pool.values())
-        # Ранжируем: сперва подтверждённые обоими каналами, затем по вектору.
         cands.sort(key=lambda c: (
             len(c["sources"]),
             c["vector_similarity"] if c["vector_similarity"] is not None else -1.0,
         ), reverse=True)
-
-        # Обогащаем метаданными иерархии и меткой для LLM-судьи ("[область] имя"),
-        # как в MappingService.map_product_to_standards.
-        ids = [c["standard_id"] for c in cands]
-        if ids:
-            meta_res = await self.db.execute(
-                text("SELECT id, full_code, subsection_name FROM industry_standards "
-                     "WHERE id = ANY(:ids)"),
-                {"ids": ids},
-            )
-            meta = {r[0]: (r[1], r[2]) for r in meta_res.fetchall()}
-            for c in cands:
-                full_code, subsection_name = meta.get(c["standard_id"], (None, None))
-                is_generic = bool(full_code) and full_code.count(".") == 1
-                area = "По предметной области" if is_generic else (subsection_name or "")
-                c["full_code"] = full_code
-                c["subsection_name"] = subsection_name
-                c["llm_label"] = f"[{area}] {c['standard_name']}" if area else c["standard_name"]
         return cands
 
+    async def _enrich(self, cands: list[dict]) -> None:
+        """Дописать кандидатам метаданные иерархии и метку для LLM ("[область] имя")."""
+        ids = [c["standard_id"] for c in cands]
+        if not ids:
+            return
+        meta_res = await self.db.execute(
+            text("SELECT id, full_code, subsection_name FROM industry_standards "
+                 "WHERE id = ANY(:ids)"),
+            {"ids": ids},
+        )
+        meta = {r[0]: (r[1], r[2]) for r in meta_res.fetchall()}
+        for c in cands:
+            full_code, subsection_name = meta.get(c["standard_id"], (None, None))
+            is_generic = bool(full_code) and full_code.count(".") == 1
+            area = "По предметной области" if is_generic else (subsection_name or "")
+            c["full_code"] = full_code
+            c["subsection_name"] = subsection_name
+            c["llm_label"] = f"[{area}] {c['standard_name']}" if area else c["standard_name"]
+
     @staticmethod
-    def _line_query(line: dict) -> str:
-        """Текст для ретрива по 838. Главный сигнал — НАИМЕНОВАНИЕ позиции: в
-        44-ФЗ оно обычно совпадает с наименованием позиции 838. Характеристики
-        описывают СОДЕРЖИМОЕ набора (репродукции/портреты/таблицы и т.п.) и
-        способны увести ретрив в сторону (на стандарт одного из вложений), поэтому
-        их добавляем только если имени мало (коротко) для уверенного ретрива.
-        (Полный список характеристик остаётся в позиции — пригодится LLM-судье.)"""
+    def _name_query(line: dict) -> str:
+        return (line.get("name") or "").strip()[:512]
+
+    @staticmethod
+    def _full_query(line: dict) -> str:
         name = (line.get("name") or "").strip()
-        if len(lemmatize(name)) >= 4:
-            return name[:512]
         extra = " ".join((ch.get("name") or "") for ch in line.get("characteristics", []))
         return (name + " " + extra).strip()[:512]
+
+    async def _text_pool(self, line: dict) -> tuple[list[dict], dict | None]:
+        """Пул кандидатов 838 + лучший кандидат по ИМЕНИ.
+
+        Возвращает (pool, name_top1):
+          * pool — ОБЪЕДИНЕНИЕ ретрива по наименованию и по наименование+
+            характеристики. Имя даёт точность (наименование позиции 44-ФЗ обычно
+            совпадает с наименованием 838), характеристики — полноту (поднимают в
+            пул правильный стандарт, который чистое имя могло потерять). Большой
+            recall важен для LLM-судьи: он выбирает из пула, и нужный стандарт
+            должен там быть.
+          * name_top1 — топ ретрива ПО ИМЕНИ: его берём как ответ, когда LLM
+            выключен (точность@1 у имени выше, чем у имя+характеристики).
+        """
+        name_cands = await self._retrieve(self._name_query(line))
+        full_q = self._full_query(line)
+        full_cands = (await self._retrieve(full_q)
+                      if full_q != self._name_query(line) else [])
+
+        # Объединяем: сначала кандидаты по имени (порядок сохраняем), затем
+        # уникальные добавки из ретрива по характеристикам.
+        pool: list[dict] = list(name_cands)
+        seen = {c["standard_id"] for c in pool}
+        for c in full_cands:
+            if c["standard_id"] not in seen:
+                pool.append(c)
+                seen.add(c["standard_id"])
+        pool = pool[:25]  # держим промпт LLM-судьи компактным
+        await self._enrich(pool)
+        name_top1 = name_cands[0] if name_cands else None
+        return pool, name_top1
 
     async def _resolve_standard(self, line: dict, use_llm: bool = False,
                                 provider: str | None = None) -> dict:
@@ -197,8 +222,8 @@ class EstimateMatcher:
             return {"method": "okpd2", "standards": by_okpd2, "candidates": by_okpd2,
                     "reason": "совпадение ОКПД2"}
 
-        cands = await self._by_text(self._line_query(line))
-        if not cands:
+        pool, name_top1 = await self._text_pool(line)
+        if not pool:
             return {"method": "none", "standards": [], "candidates": [], "reason": ""}
 
         # Детерминированный роутер (демо-таблицы и т.п.) — дёшево, без LLM.
@@ -208,35 +233,38 @@ class EstimateMatcher:
             sid, reason = rule
             std = {"standard_id": sid, "standard_name": idx["names"].get(sid, ""),
                    "full_code": None}
-            return {"method": "rule", "standards": [std], "candidates": cands[:5],
+            return {"method": "rule", "standards": [std], "candidates": pool[:5],
                     "reason": reason}
 
         if not use_llm:
-            return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
-                    "reason": "топ текстового ретрива (без LLM)"}
+            return {"method": "text", "standards": [name_top1] if name_top1 else [],
+                    "candidates": pool[:5], "reason": "топ текстового ретрива (без LLM)"}
 
-        # LLM-судья выбирает из пула один стандарт (или null). Характеристики
+        # LLM-судья выбирает из ПУЛА один стандарт (или null). Характеристики
         # позиции здесь ПОМОГАЮТ уточнить тип (в отличие от ретрива).
         properties = {ch.get("name"): ch.get("value")
                       for ch in line.get("characteristics", []) if ch.get("name")}
         llm = await get_llm_mapping(
             {"name": line.get("name", ""), "description": "", "properties": properties},
             [{"id": c["standard_id"], "standard_name": c.get("llm_label", c["standard_name"])}
-             for c in cands],
+             for c in pool],
             provider=provider,
         )
         if not llm.get("error"):
-            picked = next((c for c in cands if c["standard_id"] == llm.get("standard_id")), None)
+            picked = next((c for c in pool if c["standard_id"] == llm.get("standard_id")), None)
             if picked:
                 conf = llm.get("confidence", 0.0) or 0.0
                 return {"method": "text+llm", "standards": [picked],
-                        "candidates": cands[:5],
+                        "candidates": pool[:5],
                         "reason": f"LLM (conf {conf:.2f}): {llm.get('reason', '')}"}
-            # LLM сказал «нет подходящего типа» (null) — берём топ ретрива с пометкой.
-            return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
+            # LLM сказал «нет подходящего типа» (null) — берём топ ретрива по имени.
+            return {"method": "text",
+                    "standards": [name_top1] if name_top1 else [],
+                    "candidates": pool[:5],
                     "reason": f"LLM не выбрал тип ({llm.get('reason', '')}); взят топ ретрива"}
-        # Сбой LLM — graceful fallback на топ ретрива.
-        return {"method": "text", "standards": cands[:1], "candidates": cands[:5],
+        # Сбой LLM — graceful fallback на топ ретрива по имени.
+        return {"method": "text", "standards": [name_top1] if name_top1 else [],
+                "candidates": pool[:5],
                 "reason": f"сбой LLM ({llm.get('reason', '')}); взят топ ретрива"}
 
     # ------------------------------------------------------------------ #

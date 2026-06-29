@@ -77,8 +77,8 @@ def _print_result(res: dict) -> None:
                     a_ms_s = "—" if a_ms is None else f"{a_ms:.2f}"
                     print(f"          · {_money(a.get('retail_price'))} — "
                           f"{a['product_name'][:55]} ({a['supplier_name']}, score={a_ms_s})")
-        # Для текстового матча покажем топ кандидатов 838 — проверить качество.
-        if method == "text" and r["standard_candidates"]:
+        # Для текстового матча/LLM покажем топ кандидатов 838 — проверить качество.
+        if method in ("text", "text+llm", "rule") and r["standard_candidates"]:
             print("       кандидаты 838 (ретрив):")
             for c in r["standard_candidates"][:3]:
                 vs = c.get("vector_similarity")
