@@ -208,6 +208,13 @@ async-сессией БД.
 - `api/endpoints/review.py` — ручная проверка: `/api/review` (HTML), `/stats`,
   `/queue`, `/product/{id}/candidates`, `/mapping/{id}/approve|reassign|reject`.
 - `api/endpoints/jobs.py` — `GET /api/jobs/{id}`.
+- `api/endpoints/estimates.py` — **API входящих смет**: `POST /api/estimates/upload`
+  (xlsx, фон: разбор+подбор+запись, отдаёт job_id; параметры use_llm/provider/
+  decompose/price_basis), `GET /api/estimates`, `GET /api/estimates/{id}` (позиции
+  с товаром/поставщиком/ценой), `GET /api/estimates/{id}/items/{item_id}/candidates`
+  (варианты товаров по стандарту строки), `POST .../choose?product_id=&supplier_id=`
+  (ручной выбор + пересчёт итога), `GET /api/estimates/{id}/export` (xlsx),
+  `DELETE /api/estimates/{id}`. Запись/подбор — через `EstimateMatcher.save_estimate`.
 
 ### Frontend (`frontend/`, React 18 + Vite + TS, раздаётся под `/app`)
 - `src/api.ts` — типы + клиент: upload/listSuppliers/listProducts/autoMap/
@@ -243,6 +250,9 @@ async-сессией БД.
   в `838.xlsx`/прайсе лежат коды, и написать корректный скрипт их проставления.
 - `migrate_drop_sku_unique.py` — снять глобальный UNIQUE с `products.sku` (товары
   стали per-supplier). Идемпотентно, одноразово на боевой БД.
+- `migrate_estimate_items_columns.py --db-url ...` — **добавить в estimate_items**
+  колонки `source_name/group_name/unit/match_method/match_reason` (для записи смет).
+  Идемпотентно. **ЗАПУСТИТЬ на боевой БД перед использованием загрузки смет.**
 - `import_products.py`, `run_automap.py`, `eval_pipeline.py`, `parse_order_838.py`,
   `import_standards.py`, `generate_embeddings.py`, `regenerate_product_embeddings.py`,
   `export_standards.py`, `diagnose_mapping.py`, `simulate_strategies.py`,
@@ -275,7 +285,11 @@ async-сессией БД.
 - **`estimate_items`** — id, estimate_id FK→estimates (ON DELETE CASCADE),
   standard_id FK→industry_standards (SET NULL), product_id FK→products (SET NULL),
   supplier_id FK→suppliers (SET NULL), quantity NUMERIC(10,2), unit_price
-  NUMERIC(15,2), total_price NUMERIC(15,2), created_at. **ПОКА ПУСТАЯ.**
+  NUMERIC(15,2), total_price NUMERIC(15,2), created_at. **+ добавлены колонки**
+  (миграция `migrate_estimate_items_columns.py`, есть в init.sql): `source_name`
+  (исходное имя строки/вложения — чтобы несопоставленные позиции не теряли текст),
+  `group_name` (имя строки-набора, если позиция — вложение разложенного набора),
+  `unit`, `match_method`, `match_reason`. Заполняется `save_estimate`.
 
 ---
 
@@ -370,10 +384,31 @@ python scripts/match_estimate.py ../data/input/smeta-1.xlsx ../data/input/smeta-
 `python scripts/match_estimate.py ../data/input/smeta-2.xlsx --db-url "$DBURL" --llm aitunnel --decompose`
 — ожидаем, что смета-2 разложится на вложения и каждое получит товар/цену.
 
-### ПОТОМ
-Запись в `estimates`/`estimate_items` (вложения набора — отдельные `estimate_items`),
-эндпоинты `POST /api/estimates/upload` (фон) + `GET /api/estimates/{id}` + выбор
-товара/поставщика + экспорт; UI-раздел смет; фильтр поставщиков.
+### СДЕЛАНО: backend смет (запись + эндпоинты)
+`api/endpoints/estimates.py` + `EstimateMatcher.save_estimate` + миграция
+`migrate_estimate_items_columns.py`. Вложения набора пишутся как отдельные
+`estimate_items` (`group_name` = имя набора). Несопоставленные позиции тоже
+сохраняются (product/supplier NULL, цена 0) — потребность не теряется.
+
+**Запустить на сервере (один раз) перед загрузкой смет:**
+```bash
+cd /opt/catalog && git pull origin claude/handoff-review-7z5w0i
+cd backend && source venv/bin/activate
+DBURL="$(grep -E '^database_url=' .env | cut -d= -f2- | tr -d '\"' | sed 's#^postgresql://#postgresql+asyncpg://#')"
+python scripts/migrate_estimate_items_columns.py --db-url "$DBURL"
+bash scripts/restart_server.sh   # подхватить новый роутер
+# проверка API (подбор идёт через AITunnel — займёт время):
+curl -s -F file=@../data/input/smeta-2.xlsx -F provider=aitunnel \
+     http://127.0.0.1:8001/api/estimates/upload
+# вернёт {job_id}; статус: curl /api/jobs/<id>; смета: curl /api/estimates/<estimate_id>
+```
+
+### ПОТОМ: UI-раздел смет (фронтенд) и фильтр поставщиков
+SPA: страница списка смет, загрузка (форма + xlsx, фоновый прогресс через
+`pollJob`), детальная смета (позиции с подобранным товаром/ценой, набор-группы,
+ручной выбор через `/candidates`+`/choose`, экспорт). Переиспользовать
+`JobProgress`, `api.ts`. **Фронт коммитить вместе со сборкой `frontend/dist`.**
+Затем — фильтр поставщиков (пока подбор из всех).
 
 ### ОТКРЫТЫЕ ВОПРОСЫ — задать пользователю в начале (не угадывать!)
 1. **Формат входящей сметы:** Excel/CSV? Какие колонки? Строки ссылаются на коды

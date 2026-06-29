@@ -95,12 +95,21 @@ CREATE TABLE estimates (
 );
 
 -- Позиции сметы
+-- source_name — исходное наименование строки/вложения из входящей сметы
+--   (нужно, чтобы несопоставленные позиции не теряли текст потребности).
+-- group_name  — наименование строки-набора, если позиция получена разложением
+--   набора на вложения (NULL — обычная позиция).
 CREATE TABLE estimate_items (
     id SERIAL PRIMARY KEY,
     estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
     standard_id INTEGER REFERENCES industry_standards(id) ON DELETE SET NULL,
     product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
     supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+    source_name TEXT,
+    group_name TEXT,
+    unit VARCHAR(50),
+    match_method VARCHAR(20),
+    match_reason TEXT,
     quantity NUMERIC(10,2) NOT NULL,
     unit_price NUMERIC(15,2) NOT NULL,
     total_price NUMERIC(15,2) NOT NULL,

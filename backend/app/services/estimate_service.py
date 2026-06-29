@@ -428,12 +428,17 @@ class EstimateMatcher:
 
     async def match_estimate(self, parsed: dict, use_llm: bool = False,
                              provider: str | None = None,
-                             decompose: bool = False) -> dict:
-        """Подобрать товары под все позиции разобранной сметы + посчитать итоги."""
+                             decompose: bool = False, progress=None) -> dict:
+        """Подобрать товары под все позиции разобранной сметы + посчитать итоги.
+        progress: callable(processed, total) — для прогресса фоновой задачи."""
         items = parsed.get("items", [])
-        results = [await self.match_line(it, use_llm=use_llm, provider=provider,
-                                         decompose=decompose)
-                   for it in items]
+        results = []
+        for i, it in enumerate(items, 1):
+            results.append(await self.match_line(it, use_llm=use_llm,
+                                                 provider=provider,
+                                                 decompose=decompose))
+            if progress:
+                progress(i, len(items))
 
         subtotal = sum(r["total_price"] for r in results if r["total_price"])
         vat = await self.vat_rate()
@@ -472,6 +477,75 @@ class EstimateMatcher:
                 "price_basis": self.price_basis,
             },
         }
+
+
+    # ------------------------------------------------------------------ #
+    # Сохранение результата подбора в БД (estimates / estimate_items)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _leaves(match_result: dict):
+        """Плоский список «листьев» сметы: обычная позиция — сама строка;
+        набор — его вложения (group_name = наименование набора)."""
+        for r in match_result.get("items", []):
+            if r.get("is_bundle"):
+                for sub in r["sub_items"]:
+                    yield sub, r["line"].get("name")
+            else:
+                yield r, None
+
+    async def save_estimate(self, name: str, match_result: dict,
+                            description: str | None = None) -> dict:
+        """Записать смету и её позиции. Вложения набора сохраняются как отдельные
+        estimate_items (group_name = имя набора). Несопоставленные позиции тоже
+        сохраняются (с product/supplier = NULL, ценой 0) — чтобы не терять
+        потребность; их можно дозаполнить вручную (choose)."""
+        leaves = list(self._leaves(match_result))
+        total_amount = sum(
+            (leaf.get("total_price") or 0.0) for leaf, _ in leaves)
+
+        res = await self.db.execute(
+            text("""INSERT INTO estimates (name, description, total_amount)
+                    VALUES (:name, :descr, :total) RETURNING id"""),
+            {"name": name, "descr": description, "total": total_amount},
+        )
+        estimate_id = res.scalar()
+
+        for leaf, group_name in leaves:
+            line = leaf["line"]
+            std = leaf.get("standard")
+            offer = leaf.get("chosen_offer")
+            await self.db.execute(
+                text("""
+                    INSERT INTO estimate_items
+                      (estimate_id, standard_id, product_id, supplier_id,
+                       source_name, group_name, unit, match_method, match_reason,
+                       quantity, unit_price, total_price)
+                    VALUES
+                      (:eid, :sid, :pid, :supid, :sname, :gname, :unit, :method,
+                       :reason, :qty, :uprice, :tprice)
+                """),
+                {
+                    "eid": estimate_id,
+                    "sid": std["standard_id"] if std else None,
+                    "pid": offer["product_id"] if offer else None,
+                    "supid": offer["supplier_id"] if offer else None,
+                    "sname": line.get("name"),
+                    "gname": group_name,
+                    "unit": line.get("unit"),
+                    "method": leaf.get("match_method"),
+                    "reason": leaf.get("match_reason"),
+                    "qty": line.get("quantity") or 1.0,
+                    "uprice": leaf.get("unit_price") or 0.0,
+                    "tprice": leaf.get("total_price") or 0.0,
+                },
+            )
+        await self.db.commit()
+        return {"estimate_id": estimate_id, "items": len(leaves),
+                "total_amount": round(total_amount, 2)}
+
+    async def offers_for_standard(self, standard_id: int) -> list[dict]:
+        """Предложения (товар+цена) под один стандарт — для ручного выбора в UI."""
+        return await self._offers_for_standards([standard_id])
 
 
 def _to_float(v, default: float = 0.0) -> float:

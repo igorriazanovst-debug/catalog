@@ -403,10 +403,11 @@ def _col_letter(idx0: int) -> str:
     return s
 
 
-def parse_estimate(path: str | Path) -> dict:
+def parse_estimate(source, display_name: str | None = None) -> dict:
     """Разобрать книгу: выбрать лист с лучшей шапкой и вернуть его разбор.
-    В диагностику кладём список всех листов и какой выбран."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    `source` — путь (str/Path) ИЛИ файловый объект (напр. BytesIO загруженного
+    файла). В диагностику кладём список всех листов и какой выбран."""
+    wb = openpyxl.load_workbook(source, data_only=True)
     best = None
     best_score = -1
     for ws in wb.worksheets:
@@ -416,10 +417,11 @@ def parse_estimate(path: str | Path) -> dict:
         if score > best_score:
             best_score = score
             best = ws
+    label = display_name or (str(source) if isinstance(source, (str, Path)) else "<upload>")
     if best is None:
-        return {"file": str(path), "sheets": wb.sheetnames, "result": None,
+        return {"file": label, "sheets": wb.sheetnames, "result": None,
                 "warnings": ["В книге нет листов."]}
     result = parse_worksheet(best)
-    result["file"] = str(path)
+    result["file"] = label
     result["sheets"] = wb.sheetnames
     return result
